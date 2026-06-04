@@ -92,6 +92,7 @@ export default function App() {
   const [sourceMode, setSourceMode] = useState<'upload' | 'teams' | 'demo'>('upload');
   const [whisperModel, setWhisperModel] = useState('small');
   const [llmModel, setLlmModel] = useState('qwen2.5:7b-instruct');
+  const [visionModel, setVisionModel] = useState('llava:7b');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [spokenLanguage, setSpokenLanguage] = useState('en');
   const [asrPrompt, setAsrPrompt] = useState('English technical lecture. Preserve exact English terms.');
@@ -130,7 +131,7 @@ export default function App() {
   });
 
   // Multimodal outputs
-  const [activeTab, setActiveTab] = useState<'notes' | 'visual' | 'playback' | 'dataset' | 'chat'>('notes');
+  const [activeTab, setActiveTab] = useState<'notes' | 'visual' | 'playback' | 'chat'>('notes');
   const [transcript, setTranscript] = useState<any[]>([]);
   const [slides, setSlides] = useState<any[]>([]);
   const [reportMarkdown, setReportMarkdown] = useState('');
@@ -138,6 +139,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [playbackTime, setPlaybackTime] = useState(0);
   const [activeTranscriptIndex, setActiveTranscriptIndex] = useState<number | null>(null);
+  const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
 
@@ -162,6 +164,11 @@ export default function App() {
           } else {
             setLlmModel(res.data.models[0]);
           }
+          const visionCandidate = res.data.models.find((model: string) => {
+            const name = model.toLowerCase();
+            return name.includes('llava') || name.includes('qwen') && name.includes('vl') || name.includes('minicpm-v') || name.includes('moondream');
+          });
+          if (visionCandidate) setVisionModel(visionCandidate);
         }
       })
       .catch(() => {});
@@ -303,6 +310,7 @@ export default function App() {
         whisper_hotwords: hotwords,
         use_os_glossary: useOsGlossary,
         vision_mode: visualMode,
+        vision_model: visionModel,
         ssim_thresh: ssimSensitivity,
         min_slide_gap: minKeyframeGap,
         max_slide_count: maxKeyframes,
@@ -399,14 +407,23 @@ export default function App() {
   };
 
   const handleSeekVideo = (seconds: number) => {
+    setActiveTab('playback');
+    setPendingSeekTime(seconds);
+    setPlaybackTime(seconds);
+    const nextIndex = findActiveTranscriptIndex(seconds);
+    setActiveTranscriptIndex(nextIndex >= 0 ? nextIndex : null);
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'playback' || pendingSeekTime === null || !videoRef.current) return;
+    const seekTime = pendingSeekTime;
     if (videoRef.current) {
-      videoRef.current.currentTime = seconds;
-      setPlaybackTime(seconds);
-      const nextIndex = findActiveTranscriptIndex(seconds);
-      setActiveTranscriptIndex(nextIndex >= 0 ? nextIndex : null);
+      videoRef.current.currentTime = seekTime;
+      setPlaybackTime(seekTime);
       videoRef.current.play().catch(() => {});
     }
-  };
+    setPendingSeekTime(null);
+  }, [activeTab, pendingSeekTime]);
 
   useEffect(() => {
     if (activeTab !== 'playback' || activeTranscriptIndex === null) return;
@@ -431,35 +448,16 @@ export default function App() {
         question: userMsg,
         model: llmModel
       });
-      setChatHistory(prev => [...prev, { role: 'assistant', content: res.data.answer }]);
+      const engine = res.data.engine ? `\n\nEngine: ${res.data.engine}` : '';
+      const sources = Array.isArray(res.data.sources) && res.data.sources.length
+        ? `\nSources: ${res.data.sources.join(', ')}`
+        : '';
+      setChatHistory(prev => [...prev, { role: 'assistant', content: `${res.data.answer}${engine}${sources}` }]);
     } catch (err: any) {
       const errMsg = err.response?.data?.detail || err.message || 'Error communicating with AI.';
       setChatHistory(prev => [...prev, { role: 'assistant', content: `Chat Grounding Error: ${errMsg}` }]);
     } finally {
       setChatLoading(false);
-    }
-  };
-
-  // --- DATASET FACTORY ---
-  const handlePackageDataset = async () => {
-    try {
-      await axios.post(`${API_BASE}/dataset/package`);
-      pollStatus();
-    } catch (err: any) {
-      alert(`Dataset extraction failed: ${err.response?.data?.detail || err.message}`);
-    }
-  };
-
-  const handleDownloadDatasetZip = () => {
-    window.open(`${API_BASE}/dataset/download`, '_blank');
-  };
-
-  const handleLaunchFineTuning = async () => {
-    try {
-      await axios.post(`${API_BASE}/dataset/train-gpu`);
-      alert('1-Click Whisper fine-tuning launched successfully inside local environment.');
-    } catch (err: any) {
-      alert(`Local GPU tuning launch failed: ${err.response?.data?.detail || err.message}`);
     }
   };
 
@@ -570,7 +568,7 @@ export default function App() {
 
             {teamsTokenReady && (
               <p style={{ color: 'var(--green-complete)', fontSize: '0.85rem', marginBottom: '0.75rem', textAlign: 'center' }}>
-                ✓ Authenticated with Microsoft Graph.
+                Authenticated with Microsoft Graph.
               </p>
             )}
 
@@ -618,6 +616,15 @@ export default function App() {
         </div>
 
         <div className="input-group">
+          <label className="input-label">Vision Model (Ollama VLM)</label>
+          <select className="form-select" value={visionModel} onChange={e => setVisionModel(e.target.value)}>
+            {Array.from(new Set([visionModel, ...ollamaModels, 'llava:7b'])).map(model => (
+              <option key={model} value={model}>{model}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="input-group">
           <label className="input-label">Spoken Language</label>
           <select className="form-select" value={spokenLanguage} onChange={e => setSpokenLanguage(e.target.value)}>
             <option value="en">English (Recommended)</option>
@@ -647,7 +654,7 @@ export default function App() {
         </div>
 
         {/* Vision and Acoustic Settings */}
-        <span className="sidebar-section-title"><Eye size={14} /> Slide OCR & Acoustic</span>
+        <span className="sidebar-section-title"><Eye size={14} /> Visual & Acoustic Analysis</span>
 
         <div className="input-group">
           <label className="input-label">Visual Mode</label>
@@ -655,6 +662,7 @@ export default function App() {
             <option value="Transcript only: skip slides/keyframes">Transcript only</option>
             <option value="Fast: capture keyframes, no OCR">Fast Keyframes (No OCR)</option>
             <option value="Full: capture keyframes + OCR">Full Keyframes + OCR</option>
+            <option value="VLM: keyframes + image understanding">VLM Keyframes + Image Understanding</option>
           </select>
         </div>
 
@@ -740,7 +748,7 @@ export default function App() {
           </button>
           
           <button className="btn-danger" style={{ width: '100%' }} onClick={handleClearCache}>
-            🧹 Start New Lecture Session
+            Start New Lecture Session
           </button>
         </div>
       </aside>
@@ -769,50 +777,33 @@ export default function App() {
             </p>
           </div>
 
-          <div className="status-badge-row">
-            <div className={`status-badge ${systemStatus.status === 'processing' ? 'active-blue pulse' : ''} ${systemStatus.status === 'completed' ? 'active-green' : ''}`}>
-              <div className="badge-dot" /> Transcript
-            </div>
-            <div className={`status-badge ${visualMode !== 'Transcript only: skip slides/keyframes' && systemStatus.status === 'completed' ? 'active-green' : ''}`}>
-              <div className="badge-dot" /> Visual Context
-            </div>
-            <div className={`status-badge ${acousticToggle && systemStatus.status === 'completed' ? 'active-green' : ''}`}>
-              <div className="badge-dot" /> Acoustic Signals
-            </div>
-            <div className={`status-badge ${reportMarkdown ? 'active-green' : ''}`}>
-              <div className="badge-dot" /> Report
-            </div>
-            <div className={`status-badge ${chatHistory.length > 0 ? 'active-amber' : ''}`}>
-              <div className="badge-dot" /> Grounded Q&A
-            </div>
-          </div>
         </header>
 
         {/* 3. Signal Processing Timeline */}
         <section className="timeline-section">
           <div className="timeline-container">
             <div className={`timeline-step ${systemStatus.status === 'completed' || systemStatus.progress > 10 ? 'completed' : ''} ${systemStatus.status === 'processing' && systemStatus.progress <= 15 ? 'active' : ''}`}>
-              <span className="step-label">Step 1/5 {systemStatus.progress <= 15 && systemStatus.status === 'processing' && '• Running'}</span>
+              <span className="step-label">Step 1/5 {systemStatus.progress <= 15 && systemStatus.status === 'processing' && '- Running'}</span>
               <span className="step-name">Input Prepared</span>
             </div>
 
             <div className={`timeline-step ${systemStatus.status === 'completed' || systemStatus.progress > 30 ? 'completed' : ''} ${systemStatus.status === 'processing' && systemStatus.progress > 15 && systemStatus.progress <= 55 ? 'active' : ''}`}>
-              <span className="step-label">Step 2/5 {systemStatus.progress > 15 && systemStatus.progress <= 55 && '• Running'}</span>
+              <span className="step-label">Step 2/5 {systemStatus.progress > 15 && systemStatus.progress <= 55 && '- Running'}</span>
               <span className="step-name">Audio & Speech ASR</span>
             </div>
 
             <div className={`timeline-step ${systemStatus.status === 'completed' || systemStatus.progress > 65 ? 'completed' : ''} ${systemStatus.status === 'processing' && systemStatus.progress > 55 && systemStatus.progress <= 75 ? 'active' : ''}`}>
-              <span className="step-label">Step 3/5 {systemStatus.progress > 55 && systemStatus.progress <= 75 && '• Running'}</span>
+              <span className="step-label">Step 3/5 {systemStatus.progress > 55 && systemStatus.progress <= 75 && '- Running'}</span>
               <span className="step-name">Acoustic Labels</span>
             </div>
 
             <div className={`timeline-step ${systemStatus.status === 'completed' || systemStatus.progress > 85 ? 'completed' : ''} ${systemStatus.status === 'processing' && systemStatus.progress > 75 && systemStatus.progress <= 90 ? 'active' : ''}`}>
-              <span className="step-label">Step 4/5 {systemStatus.progress > 75 && systemStatus.progress <= 90 && '• Running'}</span>
-              <span className="step-name">Visual Keyframes & OCR</span>
+              <span className="step-label">Step 4/5 {systemStatus.progress > 75 && systemStatus.progress <= 90 && '- Running'}</span>
+              <span className="step-name">Visual Keyframes</span>
             </div>
 
             <div className={`timeline-step ${systemStatus.status === 'completed' ? 'completed' : ''} ${systemStatus.status === 'processing' && systemStatus.progress > 90 ? 'active' : ''}`}>
-              <span className="step-label">Step 5/5 {systemStatus.progress > 90 && systemStatus.status === 'processing' && '• Finishing'}</span>
+              <span className="step-label">Step 5/5 {systemStatus.progress > 90 && systemStatus.status === 'processing' && '- Finishing'}</span>
               <span className="step-name">NLP Report Sync</span>
             </div>
           </div>
@@ -844,9 +835,6 @@ export default function App() {
             </button>
             <button className={`tab-btn ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>
               AI Grounded Q&A
-            </button>
-            <button className={`tab-btn ${activeTab === 'dataset' ? 'active' : ''}`} onClick={() => setActiveTab('dataset')}>
-              NLP Dataset Factory
             </button>
           </nav>
 
@@ -1021,9 +1009,15 @@ export default function App() {
                           )}
                         </div>
                         <div className="keyframe-info">
+                          {slide.vlm_description && (
+                            <div className="keyframe-ocr-box">
+                              <strong>VLM image understanding:</strong>
+                              <p style={{ marginTop: '0.25rem', whiteSpace: 'pre-wrap' }}>{slide.vlm_description}</p>
+                            </div>
+                          )}
                           {slide.ocr_text && (
                             <div className="keyframe-ocr-box">
-                              <strong>Slide OCR text:</strong>
+                              <strong>Extracted slide text:</strong>
                               <p style={{ marginTop: '0.25rem', whiteSpace: 'pre-wrap' }}>{slide.ocr_text}</p>
                             </div>
                           )}
@@ -1085,7 +1079,7 @@ export default function App() {
                         <div className="chat-bubble-content" style={{ width: '100%' }}>
                           <div className="workstation-loading" style={{ padding: '0.5rem', background: 'transparent', border: 'none', boxShadow: 'none' }}>
                             <span className="workstation-loading-text" style={{ fontSize: '0.8rem' }}>
-                              Reading report notes & extracting context segments...
+                              Running LangChain RAG over report and transcript...
                             </span>
                             <div className="workstation-loading-bar" style={{ marginTop: '0.35rem' }}>
                               <div className="workstation-loading-progress pulse" style={{ width: '80%' }} />
@@ -1110,89 +1104,6 @@ export default function App() {
                     Send Query
                   </button>
                 </form>
-              </div>
-            )}
-
-            {/* TAB: DATASET FACTORY */}
-            {activeTab === 'dataset' && (
-              <div className="view-container">
-                <div className="metric-row">
-                  <div className="glass-panel metric-card">
-                    <span className="metric-card-label">Dataset status</span>
-                    <h3 className="metric-card-val-blue" style={{ textTransform: 'capitalize' }}>
-                      {systemStatus.dataset_status}
-                    </h3>
-                    <p className="metric-card-desc">Current Hugging Face AudioFolder export state</p>
-                  </div>
-                  
-                  <div className="glass-panel metric-card">
-                    <span className="metric-card-label">Fine-Tuning Hook</span>
-                    <h3 className="metric-card-val-red">1-Click</h3>
-                    <p className="metric-card-desc">Direct local environment model adaptation</p>
-                  </div>
-
-                  <div className="glass-panel metric-card">
-                    <span className="metric-card-label">Dataset Format</span>
-                    <h3 className="metric-card-val-green">AudioFolder</h3>
-                    <p className="metric-card-desc">Standard Hugging Face metadata.csv and aligned WAV files</p>
-                  </div>
-                </div>
-
-                <div className="glass-panel" style={{ padding: '2rem' }}>
-                  <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>Hugging Face dataset Factory Console</h3>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '1.5rem', lineHeight: '1.5' }}>
-                    The Dataset Factory slices processed lecture recordings into individual segmented WAV audio files aligned 
-                    to the corrected transcript sentences. This packages a complete training dataset ZIP package containing a 
-                    <code>metadata.csv</code> file, suitable for automatic speech recognition (ASR) fine-tuning or evaluation workflows.
-                  </p>
-
-                  {systemStatus.dataset_status === 'exporting' && (
-                    <div className="workstation-loading" style={{ marginBottom: '1.5rem' }}>
-                      <span className="workstation-loading-text">
-                        Slicing wav streams and compressing ZIP package: {systemStatus.dataset_progress}%
-                      </span>
-                      <div className="workstation-loading-bar">
-                        <div className="workstation-loading-progress" style={{ width: `${systemStatus.dataset_progress}%` }} />
-                      </div>
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: '1rem' }}>
-                    <button 
-                      className="btn-primary" 
-                      style={{ flex: 1 }}
-                      onClick={handlePackageDataset}
-                      disabled={systemStatus.dataset_status === 'exporting' || transcript.length === 0}
-                    >
-                      Extract & Package Dataset
-                    </button>
-
-                    <button 
-                      className="btn-secondary" 
-                      onClick={handleDownloadDatasetZip}
-                      disabled={systemStatus.dataset_status !== 'completed'}
-                    >
-                      Download ZIP Archive
-                    </button>
-                  </div>
-
-                  <hr style={{ border: 'none', borderBottom: '1px solid var(--border-color)', margin: '2rem 0' }} />
-
-                  <h3 style={{ fontSize: '1.1rem', marginBottom: '0.5rem' }}>GPU Accelerated Local Fine-Tuning</h3>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1rem', lineHeight: '1.4' }}>
-                    Adapt the local Whisper model by fine-tuning it directly on this lecture dataset using your machine's 
-                    NVIDIA Graphics card (fully offline training pipeline).
-                  </p>
-
-                  <button 
-                    className="btn-primary" 
-                    style={{ background: 'rgba(255, 77, 77, 0.2)', color: 'var(--red-accent)', border: '1px solid rgba(255, 77, 77, 0.4)', boxShadow: 'none' }}
-                    onClick={handleLaunchFineTuning}
-                    disabled={systemStatus.dataset_status !== 'completed'}
-                  >
-                    Launch GPU Whisper Fine-Tuning
-                  </button>
-                </div>
               </div>
             )}
 

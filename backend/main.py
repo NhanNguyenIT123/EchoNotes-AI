@@ -26,14 +26,17 @@ from app.utils.vision import detect_slide_transitions
 from app.utils.llm import (
     get_installed_ollama_models, generate_smart_notes_stream,
     generate_offline_study_notes, convert_local_images_to_base64,
-    chunk_segments_by_time, extract_keywords_simple, summarize_chunk_offline
+    generate_offline_study_notes_from_index, chunk_segments_by_time,
+    extract_keywords_simple, summarize_chunk_offline
 )
 from app.utils.corrector import corrector, correct_transcript_segment
 from app.utils.dataset_factory import generate_whisper_dataset
 from app.utils.model_sync import download_file_from_google_drive, extract_and_install_zip, auto_detect_google_drive_paths
 from app.utils.teams_transcript import parse_teams_transcript
 from app.utils.graph_import import complete_device_flow, create_device_flow, download_teams_recording_assets, get_default_graph_config
+from app.utils.langchain_rag import answer_with_langchain_rag
 from app.utils.pdf_export import export_notes_pdf
+from app.utils.vlm import enrich_keyframes_with_vlm
 
 app = FastAPI(title="EchoNotes AI - Backend API")
 
@@ -145,7 +148,8 @@ def run_pipeline_thread(
     max_keyframes: int,
     frame_check_interval_sec: float,
     analyze_acoustics: bool,
-    speech_language: str
+    speech_language: str,
+    vision_model: str
 ):
     global state
     try:
@@ -244,6 +248,15 @@ def run_pipeline_thread(
                 run_ocr=visual_mode.startswith("Full"),
                 max_slides=int(max_keyframes)
             )
+
+            if visual_mode.startswith("VLM"):
+                state["stage"] = f"Running local VLM image understanding ({vision_model})..."
+                slide_keyframes = enrich_keyframes_with_vlm(
+                    slide_keyframes,
+                    enriched_segments,
+                    model_name=vision_model,
+                    max_frames=min(int(max_keyframes), 12),
+                )
         time.sleep(0.5)
         
         # Stage 5: Finalization & Cache Save
@@ -448,6 +461,7 @@ class AnalysisSettings(BaseModel):
     whisper_hotwords: str = ""
     use_os_glossary: bool = True
     vision_mode: str = "Fast: capture keyframes, no OCR"
+    vision_model: str = "llava:7b"
     ssim_thresh: float = SSIM_THRESHOLD
     min_slide_gap: float = 20.0
     max_slide_count: int = 80
@@ -487,7 +501,8 @@ def start_analysis(settings: AnalysisSettings, background_tasks: BackgroundTasks
         max_keyframes=settings.max_slide_count,
         frame_check_interval_sec=settings.frame_sample_interval,
         analyze_acoustics=settings.analyze_acoustics_enabled,
-        speech_language=settings.speech_language
+        speech_language=settings.speech_language,
+        vision_model=settings.vision_model
     )
     
     return {"status": "started"}
@@ -543,17 +558,19 @@ def generate_report_worker(method: str, model_name: str):
             # can show partial notes instead of looking frozen while Ollama works.
             generator = generate_smart_notes_stream(slides, transcript, model_name=model_name)
             compiled = []
+            completed_contexts = 0
             deadline = time.time() + 240
             for chunk in generator:
                 compiled.append(chunk)
+                completed_contexts += chunk.count("\n\n---\n\n")
                 state["smart_notes"] = "".join(compiled)
                 if time.time() > deadline:
                     compiled.append(
                         "\n\n---\n\n"
                         "*Local AI synthesis reached the 4-minute safety limit. "
-                        "EchoNotes appended a deterministic offline completion below.*\n\n"
+                        "EchoNotes completed only the remaining visual contexts with deterministic offline notes.*\n\n"
                     )
-                    compiled.append(generate_offline_study_notes(slides, transcript))
+                    compiled.append(generate_offline_study_notes_from_index(slides, transcript, completed_contexts))
                     break
             state["smart_notes"] = "".join(compiled)
             
@@ -645,14 +662,26 @@ def run_chat(req: ChatRequest):
     try:
         with open(enriched_cache_path, "r", encoding="utf-8") as f:
             transcript = json.load(f)
-            
+
+        try:
+            rag_result = answer_with_langchain_rag(
+                req.question,
+                state["smart_notes"],
+                transcript,
+                req.model
+            )
+            return rag_result
+        except Exception as rag_error:
+            # Keep the app usable even when Ollama embeddings or LangChain indexing fails.
+            fallback_note = f"\n\n_Engine fallback: LangChain RAG was unavailable ({rag_error}). Used custom transcript retrieval._"
+
         answer = answer_notes_question(
             req.question,
             state["smart_notes"],
             transcript,
             req.model
         )
-        return {"answer": answer}
+        return {"answer": answer + fallback_note, "engine": "Custom grounded retrieval fallback", "sources": []}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -76,11 +76,11 @@ def align_content_by_slides(
                         
                     emphasis_type = []
                     ac = seg["acoustics"]
-                    if ac.get("is_loud"): emphasis_type.append("nói lớn/nhấn mạnh")
-                    if ac.get("is_high_pitch"): emphasis_type.append("lên giọng")
-                    if ac.get("is_slow"): emphasis_type.append("giảng chậm/kỹ")
+                    if ac.get("is_loud"): emphasis_type.append("louder/emphasized speech")
+                    if ac.get("is_high_pitch"): emphasis_type.append("rising pitch")
+                    if ac.get("is_slow"): emphasis_type.append("slower detailed explanation")
                     
-                    type_str = ", ".join(emphasis_type) if emphasis_type else "giảng nhấn mạnh"
+                    type_str = ", ".join(emphasis_type) if emphasis_type else "emphasized speech"
                     highlights.append({
                         "timestamp": time_fmt,
                         "quote": seg["text"],
@@ -91,6 +91,7 @@ def align_content_by_slides(
             "timestamp_formatted": slide["timestamp_formatted"],
             "image_path": slide["image_path"],
             "ocr_text": slide["ocr_text"],
+            "vlm_description": slide.get("vlm_description", ""),
             "speech_text": " ".join(slide_segments),
             "highlights": highlights
         })
@@ -286,17 +287,21 @@ def generate_offline_study_notes(slides: List[Dict[str, Any]], transcript: List[
     aligned_data = align_content_by_slides(slides, transcript)
     md = []
     md.append("# EchoNotes AI - Offline Lecture Report\n\n")
-    md.append("> Generated with the deterministic NLP pipeline. The report is grounded in transcript segments, visual keyframes, and OCR when available.\n\n")
+    md.append("> Generated with the deterministic NLP pipeline. The report is grounded in transcript segments, visual keyframes, and optional extracted slide text when available.\n\n")
     md.append("---\n\n")
 
     for idx, item in enumerate(aligned_data):
         md.append(f"## Visual Context {idx + 1} - {item['timestamp_formatted']}\n\n")
         md.append(markdown_image_or_empty(item.get("image_path", "")))
 
-        md.append("### Visual Analysis\n")
+        md.append("### Keyframe Context\n")
         for bullet in build_grounded_visual_analysis(item):
             md.append(f"- {bullet}\n")
         md.append("\n")
+
+        if item.get("vlm_description"):
+            md.append("### VLM Image Understanding\n")
+            md.append(f"{item['vlm_description'].strip()}\n\n")
 
         if item.get("speech_text"):
             md.append("### Lecture Interpretation\n")
@@ -319,6 +324,27 @@ def generate_offline_study_notes(slides: List[Dict[str, Any]], transcript: List[
             md.append("\n")
 
         md.append("---\n\n")
+
+    return "".join(md)
+
+def generate_offline_study_notes_from_index(
+    slides: List[Dict[str, Any]],
+    transcript: List[Dict[str, Any]],
+    start_index: int,
+) -> str:
+    """Generate deterministic fallback only for visual contexts not yet synthesized."""
+    aligned_data = align_content_by_slides(slides, transcript)
+    remaining = aligned_data[max(0, start_index):]
+    if not remaining:
+        return ""
+
+    md = []
+    md.append("## Deterministic Completion\n\n")
+    md.append("> Local AI synthesis stopped early, so EchoNotes completed only the remaining visual contexts with the offline NLP pipeline.\n\n")
+
+    for offset, item in enumerate(remaining, start=max(0, start_index) + 1):
+        md.append(generate_offline_slide_block(item, offset))
+        md.append("\n\n---\n\n")
 
     return "".join(md)
 
@@ -416,21 +442,24 @@ def markdown_image_or_empty(image_path: str, alt_text: str = "Slide Screenshot")
     return f"![{alt_text}]({img_path})\n\n"
 
 def build_grounded_visual_analysis(item: Dict[str, Any], max_bullets: int = 4) -> List[str]:
-    """Create deterministic visual interpretation bullets grounded in OCR and nearby speech."""
+    """Create deterministic keyframe context bullets grounded in extracted text and nearby speech."""
     ocr_text = (item.get("ocr_text") or "").strip()
+    vlm_text = (item.get("vlm_description") or "").strip()
     speech_text = (item.get("speech_text") or "").strip()
-    combined = f"{ocr_text}\n{speech_text}".strip()
+    combined = f"{ocr_text}\n{vlm_text}\n{speech_text}".strip()
     keywords = extract_keywords_simple(combined, limit=10)
 
     bullets: List[str] = []
+    if vlm_text:
+        bullets.append(f"Local VLM interpretation: {vlm_text[:260]}")
     if ocr_text:
         ocr_lines = [line.strip() for line in ocr_text.splitlines() if line.strip()]
         visual_terms = ", ".join(f"`{kw}`" for kw in keywords[:6]) if keywords else "visible UI/text elements"
-        bullets.append(f"The captured frame contains visual evidence around {visual_terms}.")
+        bullets.append(f"The captured keyframe contains extracted text/context around {visual_terms}.")
         if ocr_lines:
             bullets.append(f"Most visible slide/screen text: {ocr_lines[0][:180]}.")
-    else:
-        bullets.append("No reliable OCR text was extracted, so the visual evidence is limited to the captured frame.")
+    elif not vlm_text:
+        bullets.append("This keyframe is retained as visual reference; no detailed slide text was extracted in the current fast visual mode.")
 
     if speech_text:
         summaries = summarize_chunk_offline(speech_text, max_sentences=max_bullets)
@@ -469,10 +498,14 @@ def generate_offline_slide_block(item: Dict[str, Any], slide_num: int) -> str:
     md.append(f"## Visual Context {slide_num} - {item.get('timestamp_formatted', '')}\n\n")
     md.append(markdown_image_or_empty(item.get("image_path", "")))
 
-    md.append("### Visual Analysis\n")
+    md.append("### Keyframe Context\n")
     for bullet in build_grounded_visual_analysis(item):
         md.append(f"- {bullet}\n")
     md.append("\n")
+
+    if item.get("vlm_description"):
+        md.append("### VLM Image Understanding\n")
+        md.append(f"{item['vlm_description'].strip()}\n\n")
 
     if item.get("speech_text"):
         md.append("### Lecture Interpretation\n")
@@ -703,12 +736,12 @@ def generate_smart_notes_stream(
             system_prompt = (
                 "You are an AI learning assistant.\n"
                 f"Write concise, professional {note_language} notes for a silent visual context {slide_num}/{total_slides}.\n\n"
-                "Important: no teacher transcript is available for this frame. Use only OCR text if present.\n\n"
+                "Important: no teacher transcript is available for this frame. Use only extracted visual text if present.\n\n"
                 "Required Markdown sections:\n"
                 "### Visual Content\n"
-                "   - Analyze the technical terms, structures, and processes that actually appear in this slide OCR. Use only terms supported by the data; do not force a fixed domain.\n"
+                "   - Analyze the technical terms, structures, and processes that actually appear in the extracted visual text. Use only terms supported by the data; do not force a fixed domain.\n"
                 "### Practical Notes\n"
-                "   - Explain only useful implementation or learning notes supported by OCR.\n\n"
+                "   - Explain only useful implementation or learning notes supported by the available visual/text evidence.\n\n"
                 "Strict rules:\n"
                 "- Never output Chinese characters.\n"
                 "- Do not invent teacher speech or highlights.\n"
@@ -717,7 +750,8 @@ def generate_smart_notes_stream(
             
             user_context = (
                 f"Data for visual context {slide_num}:\n"
-                f"- **OCR text:** \"{item['ocr_text']}\"\n"
+                f"- **Extracted visual text:** \"{item['ocr_text']}\"\n"
+                f"- **VLM image understanding:** \"{item.get('vlm_description', '')}\"\n"
                 "- **Transcript:** No teacher speech is aligned to this frame.\n"
             )
             
@@ -736,13 +770,14 @@ def generate_smart_notes_stream(
                 "Strict rules:\n"
                 f"- Output language: {note_language}.\n"
                 "- Never output Chinese characters. If unsure, answer in English.\n"
-                "- Do not hallucinate details not supported by OCR/transcript.\n"
+                "- Do not hallucinate details not supported by extracted visual text or transcript.\n"
                 "- Do not add slide titles; go directly into the required sections."
             )
             
             user_context = (
                 f"Data for visual context {slide_num}:\n"
-                f"- **OCR text:** \"{item['ocr_text']}\"\n"
+                f"- **Extracted visual text:** \"{item['ocr_text']}\"\n"
+                f"- **VLM image understanding:** \"{item.get('vlm_description', '')}\"\n"
                 f"- **Aligned transcript:** \"{dense_speech}\"\n"
             )
             
@@ -815,6 +850,8 @@ def generate_smart_notes_stream(
                 if dense_speech:
                     for bullet in summarize_chunk_offline(item["speech_text"], max_sentences=4):
                         yield f"- {bullet}\n"
+                elif item.get("vlm_description"):
+                    yield f"### VLM Image Understanding\n\n{item['vlm_description'].strip()}\n"
                 elif item.get("ocr_text"):
                     yield f"### Visual Content\n\n{item['ocr_text'].strip()}\n"
                 else:
