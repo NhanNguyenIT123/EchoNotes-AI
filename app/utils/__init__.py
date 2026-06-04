@@ -1,0 +1,1 @@
+# EchoNotes AI Utils Module
