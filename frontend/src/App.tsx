@@ -114,6 +114,8 @@ export default function App() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [transcriptFile, setTranscriptFile] = useState<File | null>(null);
   const [uploadStatusText, setUploadStatusText] = useState('');
+  const [projects, setProjects] = useState<any[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState('');
 
   // Pipeline execution state
   const [systemStatus, setSystemStatus] = useState({
@@ -127,7 +129,9 @@ export default function App() {
     generating_report: false,
     report_started_at: null as number | null,
     dataset_status: 'idle',
-    dataset_progress: 0
+    dataset_progress: 0,
+    active_project_id: null as string | null,
+    database: { connected: false, error: null as string | null }
   });
 
   // Multimodal outputs
@@ -174,6 +178,7 @@ export default function App() {
       .catch(() => {});
 
     pollStatus();
+    fetchProjects();
     // Poll system status every 1200ms
     const interval = setInterval(pollStatus, 1200);
     return () => clearInterval(interval);
@@ -210,6 +215,18 @@ export default function App() {
     } catch (e) {}
   };
 
+  const fetchProjects = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/projects`);
+      setProjects(res.data.projects || []);
+      if (!selectedProjectId && res.data.projects?.length) {
+        setSelectedProjectId(res.data.projects[0].id);
+      }
+    } catch {
+      setProjects([]);
+    }
+  };
+
   const fetchResults = async () => {
     try {
       const resultsRes = await axios.get(`${API_BASE}/results`);
@@ -236,6 +253,7 @@ export default function App() {
       await axios.post(`${API_BASE}/upload/video`, formData);
       setUploadStatusText(`Video ${file.name} uploaded successfully.`);
       pollStatus();
+      fetchProjects();
     } catch (err: any) {
       setUploadStatusText(`Upload failed: ${err.response?.data?.detail || err.message}`);
     }
@@ -318,6 +336,7 @@ export default function App() {
         analyze_acoustics_enabled: acousticToggle
       });
       pollStatus();
+      fetchProjects();
     } catch (err: any) {
       alert(`Analysis failed: ${err.response?.data?.detail || err.message}`);
     }
@@ -335,8 +354,34 @@ export default function App() {
       setReportMarkdown('');
       setChatHistory([]);
       pollStatus();
+      fetchProjects();
     } catch (err: any) {
       alert(`Clear failed: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleLoadProject = async () => {
+    if (!selectedProjectId) return;
+    try {
+      const res = await axios.post(`${API_BASE}/projects/${selectedProjectId}/load`);
+      setTranscript(res.data.project.transcript || []);
+      setSlides(res.data.project.slides || []);
+      setReportMarkdown(res.data.project.report_markdown || '');
+      setChatHistory((res.data.chat || []).map((m: any) => ({ role: m.role, content: m.content })));
+      pollStatus();
+      fetchProjects();
+    } catch (err: any) {
+      alert(`Load project failed: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleSaveCurrentProject = async () => {
+    try {
+      await axios.post(`${API_BASE}/projects/save-current`);
+      fetchProjects();
+      alert('Current lecture project saved to PostgreSQL.');
+    } catch (err: any) {
+      alert(`Save project failed: ${err.response?.data?.detail || err.message}`);
     }
   };
 
@@ -479,6 +524,45 @@ export default function App() {
             <h1 className="logo-text">EchoNotes AI</h1>
           </div>
           <span className="subtitle">Multimodal NLP Lecture Studio</span>
+        </div>
+
+        <div className="glass-panel" style={{ padding: '1rem', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <span className="input-label" style={{ marginBottom: 0 }}>Lecture Library</span>
+            <span style={{
+              fontSize: '0.72rem',
+              color: systemStatus.database?.connected ? 'var(--green-complete)' : 'var(--red-accent)',
+              fontWeight: 700
+            }}>
+              {systemStatus.database?.connected ? 'PostgreSQL online' : 'Database offline'}
+            </span>
+          </div>
+
+          <select
+            className="form-select"
+            value={selectedProjectId}
+            onChange={e => setSelectedProjectId(e.target.value)}
+            disabled={!projects.length}
+          >
+            {projects.length === 0 ? (
+              <option value="">No saved projects yet</option>
+            ) : (
+              projects.map(project => (
+                <option key={project.id} value={project.id}>
+                  {project.title}
+                </option>
+              ))
+            )}
+          </select>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.75rem' }}>
+            <button className="btn-secondary" onClick={handleLoadProject} disabled={!selectedProjectId}>
+              Load
+            </button>
+            <button className="btn-secondary" onClick={handleSaveCurrentProject} disabled={!systemStatus.active_project_id && !systemStatus.active_video_name}>
+              Save
+            </button>
+          </div>
         </div>
 
         {/* Data Source Selector */}

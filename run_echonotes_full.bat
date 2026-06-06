@@ -18,6 +18,19 @@ for /f "tokens=5" %%a in ('netstat -ano ^| findstr ":5173" ^| findstr "LISTENING
 )
 ping 127.0.0.1 -n 3 >nul
 
+echo [*] Starting local PostgreSQL project database if Docker is available...
+where docker >nul 2>nul
+if not errorlevel 1 (
+    docker compose up -d postgres >nul 2>nul
+    if errorlevel 1 (
+        echo [WARN] Could not start PostgreSQL automatically. Project Library will show database offline.
+    ) else (
+        echo [OK] PostgreSQL container requested.
+    )
+) else (
+    echo [WARN] Docker was not found on PATH. Project Library database will be offline.
+)
+
 :: 1. Verify python virtual environment
 if not exist "venv\Scripts\python.exe" (
     echo [ERROR] Python virtual environment was not found.

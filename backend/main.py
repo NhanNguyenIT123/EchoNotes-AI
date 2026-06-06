@@ -19,6 +19,10 @@ from app.config import (
     RAW_DIR, OUTPUTS_DIR, FRAMES_DIR, TRANSCRIPTS_DIR, DATA_DIR,
     WHISPER_MODEL_DEFAULT, OLLAMA_DEFAULT_MODEL, SSIM_THRESHOLD, FRAME_CHECK_INTERVAL
 )
+from app.db import (
+    add_chat_message, create_project_for_video, db_health, get_project_payload, init_db,
+    list_chat_messages, list_projects, save_project_artifacts, update_project_input
+)
 from app.utils.video import extract_audio_from_video
 from app.utils.audio import transcribe_audio
 from app.utils.acoustic import analyze_audio_acoustics
@@ -63,6 +67,8 @@ state = {
     "active_video_path": None,
     "active_video_name": None,
     "active_transcript_path": None,
+    "active_project_id": None,
+    "database": {"connected": False},
     
     # Teams Integration state
     "graph_device_flow": None,
@@ -82,6 +88,12 @@ state = {
 
 # Thread lock for pipeline execution
 pipeline_lock = threading.Lock()
+
+try:
+    init_db()
+    state["database"] = db_health()
+except Exception as exc:
+    state["database"] = {"connected": False, "error": str(exc)}
 
 def clear_result_caches():
     """Remove processed outputs that should not leak across videos."""
@@ -149,7 +161,8 @@ def run_pipeline_thread(
     frame_check_interval_sec: float,
     analyze_acoustics: bool,
     speech_language: str,
-    vision_model: str
+    vision_model: str,
+    project_id: Optional[str] = None,
 ):
     global state
     try:
@@ -278,6 +291,26 @@ def run_pipeline_thread(
             json.dump(cleaned_enriched_segments, f, ensure_ascii=False, indent=2)
         with open(slides_cache_path, "w", encoding="utf-8") as f:
             json.dump(cleaned_slide_keyframes, f, ensure_ascii=False, indent=2)
+
+        metrics = {
+            "transcript_segments": len(cleaned_enriched_segments),
+            "keyframes": len(cleaned_slide_keyframes),
+            "transcript_source": raw_transcript.get("metadata", {}).get("source", "whisper"),
+            "visual_mode": visual_mode,
+            "vision_model": vision_model if visual_mode.startswith("VLM") else None,
+            "acoustic_enabled": analyze_acoustics,
+        }
+        if project_id:
+            try:
+                save_project_artifacts(
+                    project_id,
+                    transcript=cleaned_enriched_segments,
+                    slides=cleaned_slide_keyframes,
+                    metrics=metrics,
+                    status="analyzed",
+                )
+            except Exception as db_exc:
+                state["database"] = {"connected": False, "error": str(db_exc)}
             
         # Clean old report cache on new video processing run
         if smart_notes_cache_path.exists():
@@ -406,6 +439,8 @@ def get_status():
         "progress": state["progress"],
         "error": state["error"],
         "active_video_name": state["active_video_name"],
+        "active_project_id": state.get("active_project_id"),
+        "database": state.get("database", {"connected": False}),
         "has_transcript_upload": state["active_transcript_path"] is not None,
         "has_teams_video": state["teams_link_video_path"] is not None,
         "generating_report": state["generating_report"],
@@ -425,6 +460,13 @@ async def upload_video(file: UploadFile = File(...)):
             
         state["active_video_path"] = str(video_path)
         state["active_video_name"] = file.filename
+        try:
+            project = create_project_for_video(video_path, source_mode="upload")
+            state["active_project_id"] = project.id
+            state["database"] = db_health()
+        except Exception as db_exc:
+            state["active_project_id"] = None
+            state["database"] = {"connected": False, "error": str(db_exc)}
         
         # Reset completed run status on new uploads
         clear_result_caches()
@@ -448,6 +490,11 @@ async def upload_transcript(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, f)
             
         state["active_transcript_path"] = str(transcript_path)
+        if state.get("active_project_id"):
+            try:
+                update_project_input(state["active_project_id"], transcript_path=str(transcript_path))
+            except Exception as db_exc:
+                state["database"] = {"connected": False, "error": str(db_exc)}
         return {"filename": file.filename, "status": "uploaded"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload transcript: {str(e)}")
@@ -502,7 +549,8 @@ def start_analysis(settings: AnalysisSettings, background_tasks: BackgroundTasks
         frame_check_interval_sec=settings.frame_sample_interval,
         analyze_acoustics=settings.analyze_acoustics_enabled,
         speech_language=settings.speech_language,
-        vision_model=settings.vision_model
+        vision_model=settings.vision_model,
+        project_id=state.get("active_project_id"),
     )
     
     return {"status": "started"}
@@ -527,6 +575,83 @@ def get_results():
         return {"transcript": transcript, "slides": slides}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read results: {str(e)}")
+
+
+@app.get("/api/projects")
+def get_projects():
+    """List saved lecture projects from PostgreSQL."""
+    try:
+        state["database"] = db_health()
+        if not state["database"].get("connected"):
+            return {"database": state["database"], "projects": []}
+        return {"database": state["database"], "projects": list_projects()}
+    except Exception as exc:
+        state["database"] = {"connected": False, "error": str(exc)}
+        return {"database": state["database"], "projects": []}
+
+
+@app.post("/api/projects/{project_id}/load")
+def load_project(project_id: str):
+    """Load a saved project into the active workstation session."""
+    global state
+    payload = get_project_payload(project_id)
+    if not payload:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    transcript = payload.get("transcript") or []
+    slides = payload.get("slides") or []
+    report_markdown = payload.get("report_markdown") or ""
+
+    with open(enriched_cache_path, "w", encoding="utf-8") as f:
+        json.dump(transcript, f, ensure_ascii=False, indent=2)
+    with open(slides_cache_path, "w", encoding="utf-8") as f:
+        json.dump(slides, f, ensure_ascii=False, indent=2)
+    with open(smart_notes_cache_path, "w", encoding="utf-8") as f:
+        f.write(report_markdown)
+
+    state["active_project_id"] = project_id
+    state["active_video_path"] = payload.get("video_path")
+    state["active_video_name"] = payload.get("video_filename")
+    state["active_transcript_path"] = payload.get("transcript_path")
+    state["smart_notes"] = report_markdown
+    state["status"] = "completed" if transcript and slides else payload.get("status", "idle")
+    state["stage"] = "Loaded project from database"
+    state["progress"] = 100 if transcript and slides else 0
+    state["error"] = None
+
+    return {"status": "loaded", "project": payload, "chat": list_chat_messages(project_id)}
+
+
+@app.post("/api/projects/save-current")
+def save_current_project():
+    """Persist active cache artifacts back into the current project record."""
+    project_id = state.get("active_project_id")
+    if not project_id:
+        video_path_str = state.get("active_video_path")
+        if not video_path_str or not Path(video_path_str).exists():
+            raise HTTPException(status_code=400, detail="No active database project or local video is attached to this session.")
+        try:
+            project = create_project_for_video(Path(video_path_str), source_mode="cache")
+            project_id = project.id
+            state["active_project_id"] = project_id
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Database unavailable: {exc}") from exc
+    transcript = []
+    slides = []
+    if enriched_cache_path.exists():
+        with open(enriched_cache_path, "r", encoding="utf-8") as f:
+            transcript = json.load(f)
+    if slides_cache_path.exists():
+        with open(slides_cache_path, "r", encoding="utf-8") as f:
+            slides = json.load(f)
+    save_project_artifacts(
+        project_id,
+        transcript=transcript,
+        slides=slides,
+        report_markdown=state.get("smart_notes", ""),
+        status="reported" if state.get("smart_notes") else "analyzed",
+    )
+    return {"status": "saved", "project_id": project_id}
 
 @app.get("/api/report/markdown")
 def get_report_markdown():
@@ -577,6 +702,15 @@ def generate_report_worker(method: str, model_name: str):
         # Save to markdown cache file
         with open(smart_notes_cache_path, "w", encoding="utf-8") as f:
             f.write(state["smart_notes"])
+        if state.get("active_project_id"):
+            try:
+                save_project_artifacts(
+                    state["active_project_id"],
+                    report_markdown=state["smart_notes"],
+                    status="reported",
+                )
+            except Exception as db_exc:
+                state["database"] = {"connected": False, "error": str(db_exc)}
             
     except Exception as e:
         state["smart_notes"] = f"### Synthesis Failed\nAn error occurred while generating notes:\n```\n{str(e)}\n```"
@@ -610,6 +744,8 @@ def save_report(data: Dict[str, str]):
     try:
         with open(smart_notes_cache_path, "w", encoding="utf-8") as f:
             f.write(new_notes)
+        if state.get("active_project_id"):
+            save_project_artifacts(state["active_project_id"], report_markdown=new_notes, status="reported")
         return {"status": "saved"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -670,6 +806,9 @@ def run_chat(req: ChatRequest):
                 transcript,
                 req.model
             )
+            if state.get("active_project_id"):
+                add_chat_message(state["active_project_id"], "user", req.question)
+                add_chat_message(state["active_project_id"], "assistant", rag_result.get("answer", ""))
             return rag_result
         except Exception as rag_error:
             # Keep the app usable even when Ollama embeddings or LangChain indexing fails.
@@ -681,6 +820,9 @@ def run_chat(req: ChatRequest):
             transcript,
             req.model
         )
+        if state.get("active_project_id"):
+            add_chat_message(state["active_project_id"], "user", req.question)
+            add_chat_message(state["active_project_id"], "assistant", answer)
         return {"answer": answer + fallback_note, "engine": "Custom grounded retrieval fallback", "sources": []}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
