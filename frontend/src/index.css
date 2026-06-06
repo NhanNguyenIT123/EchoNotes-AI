@@ -1053,6 +1053,90 @@ h1, h2, h3, h4, h5, h6 {
   line-height: 1.4;
 }
 
+/* Semantic Topic Map */
+.semantic-topic-panel {
+  border: 1px solid var(--border-color);
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.semantic-topic-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.85rem;
+}
+
+.semantic-topic-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--text-primary);
+}
+
+.semantic-topic-header p,
+.semantic-topic-header span {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.semantic-topic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+  max-height: 230px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.semantic-topic-card {
+  text-align: left;
+  border: 1px solid rgba(0, 166, 255, 0.18);
+  background: linear-gradient(180deg, rgba(0, 166, 255, 0.08), rgba(0, 0, 0, 0.18));
+  border-radius: 10px;
+  padding: 0.85rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  min-height: 132px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  transition: border-color 0.2s, transform 0.2s, background 0.2s;
+}
+
+.semantic-topic-card:hover {
+  border-color: var(--blue-normal);
+  transform: translateY(-1px);
+  background: linear-gradient(180deg, rgba(0, 166, 255, 0.14), rgba(0, 0, 0, 0.2));
+}
+
+.semantic-topic-card strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  line-height: 1.25;
+}
+
+.semantic-topic-time {
+  color: var(--blue-normal);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.semantic-topic-meta {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.semantic-topic-keywords {
+  color: var(--green-complete);
+  font-size: 0.76rem;
+  line-height: 1.35;
+  margin-top: auto;
+  overflow-wrap: anywhere;
+}
+
 /* AI Chat Terminal */
 .chat-tab-container {
   display: flex;

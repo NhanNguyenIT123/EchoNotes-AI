@@ -20,7 +20,7 @@ from app.config import (
     WHISPER_MODEL_DEFAULT, OLLAMA_DEFAULT_MODEL, SSIM_THRESHOLD, FRAME_CHECK_INTERVAL
 )
 from app.db import (
-    add_chat_message, create_project_for_video, db_health, get_project_payload, init_db,
+    add_chat_message, create_project_for_video, db_health, get_latest_project_for_video, get_project_payload, init_db,
     list_chat_messages, list_projects, save_project_artifacts, update_project_input
 )
 from app.utils.video import extract_audio_from_video
@@ -40,6 +40,7 @@ from app.utils.teams_transcript import parse_teams_transcript
 from app.utils.graph_import import complete_device_flow, create_device_flow, download_teams_recording_assets, get_default_graph_config
 from app.utils.langchain_rag import answer_with_langchain_rag
 from app.utils.pdf_export import export_notes_pdf
+from app.utils.topic_segmentation import build_semantic_topic_blocks
 from app.utils.vlm import enrich_keyframes_with_vlm
 
 app = FastAPI(title="EchoNotes AI - Backend API")
@@ -56,6 +57,7 @@ app.add_middleware(
 # Constants & Paths matching app/ui.py
 enriched_cache_path = TRANSCRIPTS_DIR / "enriched_segments_cache.json"
 slides_cache_path = TRANSCRIPTS_DIR / "slides_cache.json"
+topic_blocks_cache_path = TRANSCRIPTS_DIR / "topic_blocks_cache.json"
 smart_notes_cache_path = TRANSCRIPTS_DIR / "smart_notes_cache.md"
 
 # Global workstation state
@@ -97,7 +99,7 @@ except Exception as exc:
 
 def clear_result_caches():
     """Remove processed outputs that should not leak across videos."""
-    for cache_file in [enriched_cache_path, slides_cache_path, smart_notes_cache_path]:
+    for cache_file in [enriched_cache_path, slides_cache_path, topic_blocks_cache_path, smart_notes_cache_path]:
         try:
             if cache_file.exists():
                 cache_file.unlink()
@@ -286,14 +288,19 @@ def run_pipeline_thread(
             if use_glossary and "ocr_text" in slide and slide["ocr_text"]:
                 slide["ocr_text"] = corrector.correct_text(slide["ocr_text"])
             cleaned_slide_keyframes.append(slide)
+
+        topic_blocks = build_semantic_topic_blocks(cleaned_enriched_segments)
             
         with open(enriched_cache_path, "w", encoding="utf-8") as f:
             json.dump(cleaned_enriched_segments, f, ensure_ascii=False, indent=2)
+        with open(topic_blocks_cache_path, "w", encoding="utf-8") as f:
+            json.dump(topic_blocks, f, ensure_ascii=False, indent=2)
         with open(slides_cache_path, "w", encoding="utf-8") as f:
             json.dump(cleaned_slide_keyframes, f, ensure_ascii=False, indent=2)
 
         metrics = {
             "transcript_segments": len(cleaned_enriched_segments),
+            "semantic_topic_blocks": len(topic_blocks),
             "keyframes": len(cleaned_slide_keyframes),
             "transcript_source": raw_transcript.get("metadata", {}).get("source", "whisper"),
             "visual_mode": visual_mode,
@@ -305,6 +312,7 @@ def run_pipeline_thread(
                 save_project_artifacts(
                     project_id,
                     transcript=cleaned_enriched_segments,
+                    topic_blocks=topic_blocks,
                     slides=cleaned_slide_keyframes,
                     metrics=metrics,
                     status="analyzed",
@@ -566,13 +574,20 @@ def get_results():
             transcript = json.load(f)
         with open(slides_cache_path, "r", encoding="utf-8") as f:
             slides = json.load(f)
+        if topic_blocks_cache_path.exists():
+            with open(topic_blocks_cache_path, "r", encoding="utf-8") as f:
+                topic_blocks = json.load(f)
+        else:
+            topic_blocks = build_semantic_topic_blocks(transcript)
+            with open(topic_blocks_cache_path, "w", encoding="utf-8") as f:
+                json.dump(topic_blocks, f, ensure_ascii=False, indent=2)
             
         # Clean paths for client consumption (avoid exposing full local windows paths)
         for slide in slides:
             if "image_path" in slide and slide["image_path"]:
                 slide["image_path"] = Path(slide["image_path"]).name
                 
-        return {"transcript": transcript, "slides": slides}
+        return {"transcript": transcript, "slides": slides, "topic_blocks": topic_blocks}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read results: {str(e)}")
 
@@ -599,11 +614,14 @@ def load_project(project_id: str):
         raise HTTPException(status_code=404, detail="Project not found.")
 
     transcript = payload.get("transcript") or []
+    topic_blocks = payload.get("topic_blocks") or build_semantic_topic_blocks(transcript)
     slides = payload.get("slides") or []
     report_markdown = payload.get("report_markdown") or ""
 
     with open(enriched_cache_path, "w", encoding="utf-8") as f:
         json.dump(transcript, f, ensure_ascii=False, indent=2)
+    with open(topic_blocks_cache_path, "w", encoding="utf-8") as f:
+        json.dump(topic_blocks, f, ensure_ascii=False, indent=2)
     with open(slides_cache_path, "w", encoding="utf-8") as f:
         json.dump(slides, f, ensure_ascii=False, indent=2)
     with open(smart_notes_cache_path, "w", encoding="utf-8") as f:
@@ -631,7 +649,7 @@ def save_current_project():
         if not video_path_str or not Path(video_path_str).exists():
             raise HTTPException(status_code=400, detail="No active database project or local video is attached to this session.")
         try:
-            project = create_project_for_video(Path(video_path_str), source_mode="cache")
+            project = get_latest_project_for_video(Path(video_path_str)) or create_project_for_video(Path(video_path_str), source_mode="cache")
             project_id = project.id
             state["active_project_id"] = project_id
         except Exception as exc:
@@ -644,9 +662,18 @@ def save_current_project():
     if slides_cache_path.exists():
         with open(slides_cache_path, "r", encoding="utf-8") as f:
             slides = json.load(f)
+    topic_blocks = []
+    if topic_blocks_cache_path.exists():
+        with open(topic_blocks_cache_path, "r", encoding="utf-8") as f:
+            topic_blocks = json.load(f)
+    elif transcript:
+        topic_blocks = build_semantic_topic_blocks(transcript)
+        with open(topic_blocks_cache_path, "w", encoding="utf-8") as f:
+            json.dump(topic_blocks, f, ensure_ascii=False, indent=2)
     save_project_artifacts(
         project_id,
         transcript=transcript,
+        topic_blocks=topic_blocks,
         slides=slides,
         report_markdown=state.get("smart_notes", ""),
         status="reported" if state.get("smart_notes") else "analyzed",
@@ -798,13 +825,26 @@ def run_chat(req: ChatRequest):
     try:
         with open(enriched_cache_path, "r", encoding="utf-8") as f:
             transcript = json.load(f)
+        if topic_blocks_cache_path.exists():
+            with open(topic_blocks_cache_path, "r", encoding="utf-8") as f:
+                topic_blocks = json.load(f)
+        else:
+            topic_blocks = build_semantic_topic_blocks(transcript)
+            with open(topic_blocks_cache_path, "w", encoding="utf-8") as f:
+                json.dump(topic_blocks, f, ensure_ascii=False, indent=2)
+        slides = []
+        if slides_cache_path.exists():
+            with open(slides_cache_path, "r", encoding="utf-8") as f:
+                slides = json.load(f)
 
         try:
             rag_result = answer_with_langchain_rag(
                 req.question,
                 state["smart_notes"],
                 transcript,
-                req.model
+                req.model,
+                topic_blocks=topic_blocks,
+                slides=slides,
             )
             if state.get("active_project_id"):
                 add_chat_message(state["active_project_id"], "user", req.question)
@@ -1045,7 +1085,7 @@ def get_ollama_models():
 def clear_session_cache():
     """Clears all session caches, raw uploads, and output data."""
     global state
-    for cache_file in [enriched_cache_path, slides_cache_path, smart_notes_cache_path]:
+    for cache_file in [enriched_cache_path, slides_cache_path, topic_blocks_cache_path, smart_notes_cache_path]:
         try:
             if cache_file.exists():
                 cache_file.unlink()

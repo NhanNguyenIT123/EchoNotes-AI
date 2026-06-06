@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-from sqlalchemy import DateTime, String, Text, create_engine, select
+from sqlalchemy import DateTime, String, Text, create_engine, inspect, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -32,6 +32,7 @@ class LectureProject(Base):
     video_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     transcript_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     transcript_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    topic_blocks_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     slides_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     report_markdown: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     metrics_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -76,6 +77,18 @@ def _json_load(value: Optional[str], default: Any) -> Any:
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _ensure_schema_columns()
+
+
+def _ensure_schema_columns() -> None:
+    """Small local migration helper for MVP schema evolution."""
+    inspector = inspect(engine)
+    if not inspector.has_table("lecture_projects"):
+        return
+    existing = {column["name"] for column in inspector.get_columns("lecture_projects")}
+    with engine.begin() as conn:
+        if "topic_blocks_json" not in existing:
+            conn.exec_driver_sql("alter table lecture_projects add column topic_blocks_json text")
 
 
 def db_health() -> Dict[str, Any]:
@@ -118,6 +131,7 @@ def project_to_dict(project: LectureProject) -> Dict[str, Any]:
         "transcript_path": project.transcript_path,
         "metrics": _json_load(project.metrics_json, {}),
         "has_transcript": bool(project.transcript_json),
+        "has_topics": bool(project.topic_blocks_json),
         "has_slides": bool(project.slides_json),
         "has_report": bool(project.report_markdown),
         "created_at": project.created_at.isoformat() if project.created_at else None,
@@ -171,6 +185,20 @@ def get_project(project_id: str) -> Optional[LectureProject]:
         return project
 
 
+def get_latest_project_for_video(video_path: Path) -> Optional[LectureProject]:
+    with db_session() as session:
+        project = session.scalars(
+            select(LectureProject)
+            .where(LectureProject.video_path == str(video_path))
+            .order_by(LectureProject.updated_at.desc())
+            .limit(1)
+        ).first()
+        if not project:
+            return None
+        session.expunge(project)
+        return project
+
+
 def get_project_payload(project_id: str) -> Optional[Dict[str, Any]]:
     project = get_project(project_id)
     if not project:
@@ -179,6 +207,7 @@ def get_project_payload(project_id: str) -> Optional[Dict[str, Any]]:
     payload.update(
         {
             "transcript": _json_load(project.transcript_json, []),
+            "topic_blocks": _json_load(project.topic_blocks_json, []),
             "slides": _json_load(project.slides_json, []),
             "report_markdown": project.report_markdown or "",
         }
@@ -189,6 +218,7 @@ def get_project_payload(project_id: str) -> Optional[Dict[str, Any]]:
 def save_project_artifacts(
     project_id: str,
     transcript: Optional[List[Dict[str, Any]]] = None,
+    topic_blocks: Optional[List[Dict[str, Any]]] = None,
     slides: Optional[List[Dict[str, Any]]] = None,
     report_markdown: Optional[str] = None,
     metrics: Optional[Dict[str, Any]] = None,
@@ -200,6 +230,8 @@ def save_project_artifacts(
             return
         if transcript is not None:
             project.transcript_json = _json_dump(transcript)
+        if topic_blocks is not None:
+            project.topic_blocks_json = _json_dump(topic_blocks)
         if slides is not None:
             project.slides_json = _json_dump(slides)
         if report_markdown is not None:

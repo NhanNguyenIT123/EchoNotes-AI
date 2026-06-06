@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Generator
 from app.config import OLLAMA_API_URL, OLLAMA_DEFAULT_MODEL, OLLAMA_FALLBACK_MODEL
 from app.utils.corrector import TECH_VOCABULARY
+from app.utils.topic_segmentation import build_semantic_topic_blocks
 
 def contains_cjk(text: str) -> bool:
     return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", text or ""))
@@ -200,7 +201,7 @@ def summarize_chunk_offline(text: str, max_sentences: int = 4) -> List[str]:
 
 def generate_offline_transcript_notes(segments: List[Dict[str, Any]]) -> str:
     """Professional NLP-first fallback when the user runs transcript-only mode."""
-    chunks = chunk_segments_by_time(segments)
+    chunks = build_semantic_topic_blocks(segments)
     all_text = " ".join((s.get("text") or "").strip() for s in segments or [])
     total_words = len(all_text.split())
     duration = max((float(s.get("end", s.get("start", 0)) or 0) for s in segments or [{"end": 0}]), default=0)
@@ -215,20 +216,20 @@ def generate_offline_transcript_notes(segments: List[Dict[str, Any]]) -> str:
         md.append("**Core keywords:** " + ", ".join(f"`{kw}`" for kw in top_keywords) + "\n\n")
     md.append("These notes are generated from the transcript first. Slide/OCR context is intentionally skipped for this run, so the structure below focuses on topic flow, terminology, and reusable NLP data.\n\n")
 
-    md.append("## Topic Timeline\n\n")
+    md.append("## Semantic Topic Map\n\n")
     for idx, chunk in enumerate(chunks, start=1):
         text = chunk["text"]
-        chunk_keywords = extract_keywords_simple(text, limit=8)
+        chunk_keywords = chunk.get("keywords") or extract_keywords_simple(text, limit=8)
         bullets = summarize_chunk_offline(text, max_sentences=4)
-        md.append(f"### {format_timestamp(chunk['start'])} - {format_timestamp(chunk['end'])} | Topic Block {idx}\n\n")
+        md.append(f"### {format_timestamp(chunk['start'])} - {format_timestamp(chunk['end'])} | {chunk.get('title') or f'Topic Block {idx}'}\n\n")
         if chunk_keywords:
             md.append("**Keywords:** " + ", ".join(f"`{kw}`" for kw in chunk_keywords) + "\n\n")
         md.append("**Lecture summary:**\n")
         for bullet in bullets:
             md.append(f"- {bullet}\n")
         md.append("\n**NLP learning signals:**\n")
-        md.append(f"- Transcript window contains **{len(chunk['segments'])}** timestamped utterances.\n")
-        md.append(f"- Good candidate for topic labeling, keyphrase extraction, QA generation, and semantic search indexing.\n\n")
+        md.append(f"- Semantic block contains **{chunk.get('segment_count', 0)}** timestamped utterances and **{chunk.get('word_count', 0)}** words.\n")
+        md.append("- Good candidate for topic labeling, keyphrase extraction, QA generation, and hybrid search indexing.\n\n")
 
     md.append("## Dataset Hooks\n\n")
     md.append("- `topic_segmentation`: use each Topic Block as one labeled training/evaluation unit.\n")
@@ -285,10 +286,23 @@ def generate_offline_study_notes(slides: List[Dict[str, Any]], segments: List[Di
 def generate_offline_study_notes(slides: List[Dict[str, Any]], transcript: List[Dict[str, Any]]) -> str:
     """Deterministic transcript-first report used when local LLM is unavailable."""
     aligned_data = align_content_by_slides(slides, transcript)
+    topic_blocks = build_semantic_topic_blocks(transcript)
     md = []
     md.append("# EchoNotes AI - Offline Lecture Report\n\n")
     md.append("> Generated with the deterministic NLP pipeline. The report is grounded in transcript segments, visual keyframes, and optional extracted slide text when available.\n\n")
     md.append("---\n\n")
+
+    if topic_blocks:
+        md.append("## Semantic Topic Map\n\n")
+        for block in topic_blocks[:14]:
+            keywords = ", ".join(f"`{kw}`" for kw in block.get("keywords", [])[:8])
+            md.append(f"### {block['timestamp']} - {block['end_timestamp']} | {block['title']}\n\n")
+            if keywords:
+                md.append(f"**Keywords:** {keywords}\n\n")
+            for sentence in summarize_chunk_offline(block.get("text", ""), max_sentences=2):
+                md.append(f"- {sentence}\n")
+            md.append("\n")
+        md.append("---\n\n")
 
     for idx, item in enumerate(aligned_data):
         md.append(f"## Visual Context {idx + 1} - {item['timestamp_formatted']}\n\n")

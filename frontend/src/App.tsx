@@ -138,6 +138,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'notes' | 'visual' | 'playback' | 'chat'>('notes');
   const [transcript, setTranscript] = useState<any[]>([]);
   const [slides, setSlides] = useState<any[]>([]);
+  const [topicBlocks, setTopicBlocks] = useState<any[]>([]);
   const [reportMarkdown, setReportMarkdown] = useState('');
   const [synthesisMethod, setSynthesisMethod] = useState<'fast' | 'ollama'>('fast');
   const [searchQuery, setSearchQuery] = useState('');
@@ -232,6 +233,7 @@ export default function App() {
       const resultsRes = await axios.get(`${API_BASE}/results`);
       setTranscript(resultsRes.data.transcript);
       setSlides(resultsRes.data.slides);
+      setTopicBlocks(resultsRes.data.topic_blocks || []);
 
       const reportRes = await axios.get(`${API_BASE}/report/markdown`);
       setReportMarkdown(reportRes.data.markdown);
@@ -351,6 +353,7 @@ export default function App() {
       setUploadStatusText('');
       setTranscript([]);
       setSlides([]);
+      setTopicBlocks([]);
       setReportMarkdown('');
       setChatHistory([]);
       pollStatus();
@@ -366,6 +369,7 @@ export default function App() {
       const res = await axios.post(`${API_BASE}/projects/${selectedProjectId}/load`);
       setTranscript(res.data.project.transcript || []);
       setSlides(res.data.project.slides || []);
+      setTopicBlocks(res.data.project.topic_blocks || []);
       setReportMarkdown(res.data.project.report_markdown || '');
       setChatHistory((res.data.chat || []).map((m: any) => ({ role: m.role, content: m.content })));
       pollStatus();
@@ -976,6 +980,39 @@ export default function App() {
                     )}
                   </div>
                 </div>
+
+                {topicBlocks.length > 0 && (
+                  <section className="semantic-topic-panel">
+                    <div className="semantic-topic-header">
+                      <div>
+                        <h3>Semantic Topic Map</h3>
+                        <p>Local NLP segmentation used by the hybrid RAG engine.</p>
+                      </div>
+                      <span>{topicBlocks.length} topics</span>
+                    </div>
+                    <div className="semantic-topic-grid">
+                      {topicBlocks.slice(0, 10).map((block, idx) => (
+                        <button
+                          key={`${block.start}-${idx}`}
+                          className="semantic-topic-card"
+                          onClick={() => handleSeekVideo(block.start)}
+                          title="Jump playback to this topic"
+                        >
+                          <span className="semantic-topic-time">
+                            {block.timestamp} - {block.end_timestamp}
+                          </span>
+                          <strong>{block.title || `Topic ${idx + 1}`}</strong>
+                          <span className="semantic-topic-meta">
+                            {block.segment_count || 0} segments · {block.word_count || 0} words
+                          </span>
+                          <span className="semantic-topic-keywords">
+                            {(block.keywords || []).slice(0, 5).map((kw: string) => `#${kw}`).join(' ')}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                )}
 
                 <div className="glass-panel report-editor-card" style={{ flex: 1, minHeight: '350px' }}>
                   <div style={{ overflowY: 'auto', height: '100%' }}>
