@@ -26,6 +26,9 @@ class LectureProject(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    course_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    tags_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_mode: Mapped[str] = mapped_column(String(64), default="upload")
     status: Mapped[str] = mapped_column(String(64), default="draft")
     video_filename: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
@@ -51,6 +54,20 @@ class ChatMessage(Base):
     project_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    query_mode: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    citations_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    latency_ms: Mapped[Optional[int]] = mapped_column(nullable=True)
+    rating: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+
+class EvaluationRecord(Base):
+    __tablename__ = "evaluation_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
+    kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
@@ -87,8 +104,26 @@ def _ensure_schema_columns() -> None:
         return
     existing = {column["name"] for column in inspector.get_columns("lecture_projects")}
     with engine.begin() as conn:
-        if "topic_blocks_json" not in existing:
-            conn.exec_driver_sql("alter table lecture_projects add column topic_blocks_json text")
+        for name, ddl in {
+            "course_name": "alter table lecture_projects add column course_name varchar(255)",
+            "tags_json": "alter table lecture_projects add column tags_json text",
+            "description": "alter table lecture_projects add column description text",
+            "topic_blocks_json": "alter table lecture_projects add column topic_blocks_json text",
+        }.items():
+            if name not in existing:
+                conn.exec_driver_sql(ddl)
+
+    if inspector.has_table("chat_messages"):
+        chat_existing = {column["name"] for column in inspector.get_columns("chat_messages")}
+        with engine.begin() as conn:
+            for name, ddl in {
+                "query_mode": "alter table chat_messages add column query_mode varchar(64)",
+                "citations_json": "alter table chat_messages add column citations_json text",
+                "latency_ms": "alter table chat_messages add column latency_ms integer",
+                "rating": "alter table chat_messages add column rating varchar(32)",
+            }.items():
+                if name not in chat_existing:
+                    conn.exec_driver_sql(ddl)
 
 
 def db_health() -> Dict[str, Any]:
@@ -124,6 +159,9 @@ def project_to_dict(project: LectureProject) -> Dict[str, Any]:
     return {
         "id": project.id,
         "title": project.title,
+        "course_name": project.course_name or "",
+        "tags": _json_load(project.tags_json, []),
+        "description": project.description or "",
         "source_mode": project.source_mode,
         "status": project.status,
         "video_filename": project.video_filename,
@@ -166,14 +204,50 @@ def update_project_input(project_id: str, **fields: Any) -> None:
         project.updated_at = datetime.now(timezone.utc)
 
 
-def list_projects(limit: int = 50) -> List[Dict[str, Any]]:
+def update_project_metadata(
+    project_id: str,
+    title: Optional[str] = None,
+    course_name: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    description: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    with db_session() as session:
+        project = session.get(LectureProject, project_id)
+        if not project:
+            return None
+        if title is not None and title.strip():
+            project.title = title.strip()
+        if course_name is not None:
+            project.course_name = course_name.strip()
+        if tags is not None:
+            project.tags_json = _json_dump([tag.strip() for tag in tags if tag.strip()])
+        if description is not None:
+            project.description = description.strip()
+        project.updated_at = datetime.now(timezone.utc)
+        session.flush()
+        return project_to_dict(project)
+
+
+def list_projects(limit: int = 50, query: str = "") -> List[Dict[str, Any]]:
     with db_session() as session:
         rows = session.scalars(
             select(LectureProject)
             .order_by(LectureProject.updated_at.desc())
             .limit(limit)
         ).all()
-        return [project_to_dict(row) for row in rows]
+        projects = [project_to_dict(row) for row in rows]
+        query_l = (query or "").strip().lower()
+        if not query_l:
+            return projects
+        return [
+            project for project in projects
+            if query_l in " ".join([
+                project.get("title", ""),
+                project.get("course_name", ""),
+                project.get("description", ""),
+                " ".join(project.get("tags") or []),
+            ]).lower()
+        ]
 
 
 def get_project(project_id: str) -> Optional[LectureProject]:
@@ -243,16 +317,37 @@ def save_project_artifacts(
         project.updated_at = datetime.now(timezone.utc)
 
 
-def add_chat_message(project_id: str, role: str, content: str) -> None:
+def add_chat_message(
+    project_id: str,
+    role: str,
+    content: str,
+    query_mode: Optional[str] = None,
+    citations: Optional[List[Dict[str, Any]]] = None,
+    latency_ms: Optional[int] = None,
+) -> str:
+    message_id = str(uuid.uuid4())
     with db_session() as session:
         session.add(
             ChatMessage(
-                id=str(uuid.uuid4()),
+                id=message_id,
                 project_id=project_id,
                 role=role,
                 content=content,
+                query_mode=query_mode,
+                citations_json=_json_dump(citations or []) if citations is not None else None,
+                latency_ms=latency_ms,
             )
         )
+    return message_id
+
+
+def rate_chat_message(message_id: str, rating: str) -> bool:
+    with db_session() as session:
+        message = session.get(ChatMessage, message_id)
+        if not message:
+            return False
+        message.rating = rating
+        return True
 
 
 def list_chat_messages(project_id: str, limit: int = 100) -> List[Dict[str, Any]]:
@@ -268,6 +363,47 @@ def list_chat_messages(project_id: str, limit: int = 100) -> List[Dict[str, Any]
                 "id": row.id,
                 "role": row.role,
                 "content": row.content,
+                "query_mode": row.query_mode,
+                "citations": _json_load(row.citations_json, []),
+                "latency_ms": row.latency_ms,
+                "rating": row.rating,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            }
+            for row in rows
+        ]
+
+
+def add_evaluation_record(project_id: Optional[str], kind: str, payload: Dict[str, Any]) -> str:
+    record_id = str(uuid.uuid4())
+    with db_session() as session:
+        session.add(
+            EvaluationRecord(
+                id=record_id,
+                project_id=project_id,
+                kind=kind,
+                payload_json=_json_dump(payload),
+            )
+        )
+    return record_id
+
+
+def list_evaluation_records(project_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    with db_session() as session:
+        stmt = select(EvaluationRecord).order_by(EvaluationRecord.created_at.desc()).limit(limit)
+        if project_id:
+            stmt = (
+                select(EvaluationRecord)
+                .where(EvaluationRecord.project_id == project_id)
+                .order_by(EvaluationRecord.created_at.desc())
+                .limit(limit)
+            )
+        rows = session.scalars(stmt).all()
+        return [
+            {
+                "id": row.id,
+                "project_id": row.project_id,
+                "kind": row.kind,
+                "payload": _json_load(row.payload_json, {}),
                 "created_at": row.created_at.isoformat() if row.created_at else None,
             }
             for row in rows

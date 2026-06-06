@@ -1,0 +1,78 @@
+{
+  "name": "EchoNotes AI smoke regression set",
+  "version": 1,
+  "purpose": "Small local benchmark for checking ASR, topic segmentation, retrieval citations, and visual-context grounding after code changes.",
+  "cases": [
+    {
+      "id": "business-central-order-flow",
+      "description": "Business Central training call about confirming orders converted from quotations.",
+      "expected_topics": [
+        "confirm SO and BO from SQ and PQ",
+        "convert quotation to order",
+        "link order lines to source records"
+      ],
+      "expected_terms": [
+        "SO",
+        "BO",
+        "SQ",
+        "PQ",
+        "Business Central"
+      ],
+      "expected_timestamp_windows": [
+        {
+          "label": "SO/BO confirmation setup",
+          "start_sec": 0,
+          "end_sec": 130
+        }
+      ],
+      "grounded_questions": [
+        {
+          "mode": "find_moment",
+          "question": "Find the moment where the speaker explains confirming SO and BO from SQ and PQ.",
+          "must_return_timestamp": true
+        },
+        {
+          "mode": "explain",
+          "question": "What does the lecture say about converting quotation records into orders?",
+          "must_return_citation": true
+        }
+      ]
+    },
+    {
+      "id": "al-table-relations",
+      "description": "AL/Business Central coding lecture about table relations, lookup fields, and linked tables.",
+      "expected_topics": [
+        "table relation",
+        "lookup field",
+        "payment terms",
+        "vendor relation"
+      ],
+      "expected_terms": [
+        "TableRelation",
+        "Vendor",
+        "Payment Terms",
+        "field",
+        "line"
+      ],
+      "expected_timestamp_windows": [
+        {
+          "label": "table relation explanation",
+          "start_sec": 0,
+          "end_sec": 180
+        }
+      ],
+      "grounded_questions": [
+        {
+          "mode": "explain",
+          "question": "Explain table relations in the Business Central coding lecture.",
+          "must_return_citation": true
+        },
+        {
+          "mode": "compare_visual",
+          "question": "Compare what the slide shows with the transcript around table relations.",
+          "must_return_citation": true
+        }
+      ]
+    }
+  ]
+}

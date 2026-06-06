@@ -125,7 +125,10 @@ def analyze_audio_acoustics(audio_path: Path, segments: List[Dict[str, Any]]) ->
         if is_slow: score += 1
         
         # Check semantic clues in the text
-        semantic_clues = ["quan trọng", "lưu ý", "thi", "lỗi", "chú ý", "nhớ", "important", "remember", "exam", "mistake"]
+        semantic_clues = [
+            "important", "remember", "mistake", "warning", "note",
+            "pay attention", "be careful", "critical", "key point",
+        ]
         text_lower = seg["text"].lower()
         has_semantic_clue = any(clue in text_lower for clue in semantic_clues)
         

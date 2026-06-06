@@ -81,6 +81,7 @@ def _build_documents(
     transcript_segments: List[Dict[str, Any]],
     topic_blocks: List[Dict[str, Any]] | None = None,
     slides: List[Dict[str, Any]] | None = None,
+    pdf_text: str = "",
 ):
     from langchain_core.documents import Document
 
@@ -89,7 +90,14 @@ def _build_documents(
         docs.append(
             Document(
                 page_content=notes[:30000],
-                metadata={"source": "EchoNotes report", "timestamp": "report"},
+                metadata={"source": "EchoNotes report", "timestamp": "report", "start": None},
+            )
+        )
+    if pdf_text.strip():
+        docs.append(
+            Document(
+                page_content=pdf_text[:30000],
+                metadata={"source": "PDF report artifact", "timestamp": "report", "start": None},
             )
         )
 
@@ -216,13 +224,15 @@ def answer_with_langchain_rag(
     model_name: str,
     topic_blocks: List[Dict[str, Any]] | None = None,
     slides: List[Dict[str, Any]] | None = None,
+    pdf_text: str = "",
+    query_mode: str = "explain",
 ) -> Dict[str, Any]:
     """Answer with LangChain RAG over report, semantic topic blocks, visual contexts, and transcript."""
     from langchain_community.retrievers import BM25Retriever
     from langchain_ollama import ChatOllama
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-    docs = _build_documents(notes or "", transcript_segments or [], topic_blocks or [], slides or [])
+    docs = _build_documents(notes or "", transcript_segments or [], topic_blocks or [], slides or [], pdf_text=pdf_text or "")
     if not docs:
         raise ValueError("No report or transcript documents are available for LangChain RAG.")
 
@@ -232,19 +242,30 @@ def answer_with_langchain_rag(
     retriever = BM25Retriever.from_documents(chunks)
     retriever.k = 12
     user_intent = _normalize_user_intent(question)
-    bm25_docs = retriever.invoke(user_intent)
-    semantic_docs = _semantic_retrieve(user_intent, chunks, k=12)
+    mode_instruction = _mode_instruction(query_mode)
+    retrieval_query = f"{query_mode}: {user_intent}"
+    bm25_docs = retriever.invoke(retrieval_query)
+    semantic_docs = _semantic_retrieve(retrieval_query, chunks, k=12)
     retrieved = _dedupe_documents(bm25_docs[:6] + semantic_docs[:6] + bm25_docs[6:] + semantic_docs[6:], limit=10)
 
     context_blocks = []
-    sources = []
+    citations = []
     for doc in retrieved:
         timestamp = doc.metadata.get("timestamp", "")
         source = doc.metadata.get("source", "context")
         title = doc.metadata.get("title", "")
         label_base = f"{source}: {title}" if title else source
         label = label_base if not timestamp or timestamp == "report" else f"{label_base} {timestamp}".strip()
-        sources.append(label)
+        citations.append(
+            {
+                "label": label,
+                "source": source,
+                "title": title,
+                "timestamp": timestamp,
+                "start": doc.metadata.get("start"),
+                "snippet": doc.page_content[:260],
+            }
+        )
         context_blocks.append(f"Source: {label}\n{doc.page_content}")
 
     context = "\n\n---\n\n".join(context_blocks)[:8500]
@@ -255,6 +276,7 @@ def answer_with_langchain_rag(
         "Answer in English unless the user asks another language. Never output Chinese characters.\n"
         "Do not copy the user's text or the retrieved context verbatim. Synthesize the answer in your own words.\n"
         "Prefer semantic topic and visual-keyframe evidence when it directly answers the question, then use transcript details as support.\n"
+        f"Query mode: {query_mode}. {mode_instruction}\n"
         "If the user pasted a statement instead of asking a question, explain the statement, why it matters, and any caveats supported by context.\n"
         "Include short timestamp/source references when useful.\n\n"
         f"Retrieved context:\n{context}\n\n"
@@ -279,13 +301,30 @@ def answer_with_langchain_rag(
             "I can only ground this at a high level from the retrieved lecture context; the transcript evidence around this exact SO/SQ/PQ workflow is limited."
         )
 
-    unique_sources = []
-    for source in sources:
-        if source and source not in unique_sources:
-            unique_sources.append(source)
+    unique_citations = []
+    seen = set()
+    for citation in citations:
+        key = (citation.get("label"), citation.get("start"))
+        if citation.get("label") and key not in seen:
+            seen.add(key)
+            unique_citations.append(citation)
 
     return {
         "answer": answer,
         "engine": "LangChain Hybrid RAG + BM25 + local semantic vectors + Ollama",
-        "sources": unique_sources[:6],
+        "sources": [item["label"] for item in unique_citations[:6]],
+        "citations": unique_citations[:6],
     }
+
+
+def _mode_instruction(query_mode: str) -> str:
+    mode = (query_mode or "explain").lower()
+    if mode == "find_moment":
+        return "Prioritize exact timestamps and briefly explain why those moments match."
+    if mode == "quiz":
+        return "Generate 3-5 review questions with concise answer hints grounded in the context."
+    if mode == "summarize_range":
+        return "Summarize only the retrieved timestamp range and keep the answer structured."
+    if mode == "compare_visual":
+        return "Compare visual keyframe evidence with transcript evidence; mention gaps or disagreements."
+    return "Explain the concept clearly with practical implications and grounded citations."

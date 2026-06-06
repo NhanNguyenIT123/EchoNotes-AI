@@ -1230,6 +1230,18 @@ h1, h2, h3, h4, h5, h6 {
   padding: 1rem 0;
 }
 
+.chat-mode-select {
+  width: 180px;
+  background: rgba(0,0,0,0.3);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0.75rem;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  outline: none;
+}
+
 .chat-text-input {
   flex: 1;
   background: rgba(0,0,0,0.3);
@@ -1262,6 +1274,146 @@ h1, h2, h3, h4, h5, h6 {
 
 .chat-send-btn:hover {
   filter: brightness(1.1);
+}
+
+.chat-citation-area {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+.chat-engine {
+  width: 100%;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.citation-chip {
+  border: 1px solid rgba(0, 145, 255, 0.28);
+  background: rgba(0, 145, 255, 0.08);
+  color: var(--blue-normal);
+  border-radius: 999px;
+  padding: 0.28rem 0.55rem;
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.citation-chip:disabled {
+  cursor: default;
+  color: var(--text-muted);
+  border-color: var(--border-color);
+  background: rgba(255,255,255,0.03);
+}
+
+.feedback-row {
+  width: 100%;
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.feedback-row button {
+  border: 1px solid var(--border-color);
+  background: rgba(255,255,255,0.03);
+  color: var(--text-secondary);
+  border-radius: 6px;
+  padding: 0.25rem 0.45rem;
+  font-size: 0.7rem;
+  cursor: pointer;
+}
+
+.feedback-row button:hover {
+  border-color: var(--green-complete);
+  color: var(--text-primary);
+}
+
+.evaluation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.eval-card {
+  padding: 1rem;
+  min-height: 180px;
+}
+
+.eval-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.eval-card h3 {
+  margin-bottom: 0.75rem;
+  color: var(--text-primary);
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 0.6rem;
+}
+
+.metric-tile {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.025);
+  padding: 0.7rem;
+}
+
+.metric-tile span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: capitalize;
+  margin-bottom: 0.35rem;
+}
+
+.metric-tile strong {
+  color: var(--text-primary);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.eval-muted {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.speaker-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.speaker-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.6rem;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.speaker-row strong {
+  color: var(--green-complete);
+}
+
+.speaker-row em {
+  color: var(--text-muted);
+  font-style: normal;
+}
+
+.eval-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.6rem;
 }
 
 /* Skeletons and Empty States */

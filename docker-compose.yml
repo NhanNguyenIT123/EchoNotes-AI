@@ -17,5 +17,64 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: echonotes-redis
+    restart: unless-stopped
+    profiles: ["full"]
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: echonotes-backend
+    restart: unless-stopped
+    profiles: ["full"]
+    environment:
+      ECHONOTES_DATABASE_URL: postgresql+psycopg://echonotes:echonotes@postgres:5432/echonotes
+      ECHONOTES_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: echonotes-worker
+    restart: unless-stopped
+    profiles: ["full"]
+    command: ["python", "backend/worker.py"]
+    environment:
+      ECHONOTES_DATABASE_URL: postgresql+psycopg://echonotes:echonotes@postgres:5432/echonotes
+      ECHONOTES_REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./data:/app/data
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: echonotes-frontend
+    restart: unless-stopped
+    profiles: ["full"]
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+
 volumes:
   echonotes_postgres_data:

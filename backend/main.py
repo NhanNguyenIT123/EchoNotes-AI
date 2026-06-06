@@ -20,8 +20,10 @@ from app.config import (
     WHISPER_MODEL_DEFAULT, OLLAMA_DEFAULT_MODEL, SSIM_THRESHOLD, FRAME_CHECK_INTERVAL
 )
 from app.db import (
-    add_chat_message, create_project_for_video, db_health, get_latest_project_for_video, get_project_payload, init_db,
-    list_chat_messages, list_projects, save_project_artifacts, update_project_input
+    add_chat_message, add_evaluation_record, create_project_for_video, db_health,
+    get_latest_project_for_video, get_project_payload, init_db, list_chat_messages,
+    list_evaluation_records, list_projects, rate_chat_message, save_project_artifacts,
+    update_project_input, update_project_metadata
 )
 from app.utils.video import extract_audio_from_video
 from app.utils.audio import transcribe_audio
@@ -39,8 +41,12 @@ from app.utils.model_sync import download_file_from_google_drive, extract_and_in
 from app.utils.teams_transcript import parse_teams_transcript
 from app.utils.graph_import import complete_device_flow, create_device_flow, download_teams_recording_assets, get_default_graph_config
 from app.utils.langchain_rag import answer_with_langchain_rag
+from app.utils.learning_exports import write_anki_tsv, write_quiz_json
 from app.utils.pdf_export import export_notes_pdf
 from app.utils.topic_segmentation import build_semantic_topic_blocks
+from app.utils.evaluation import evaluate_transcript_quality
+from app.utils.diarization import infer_speaker_roles
+from app.utils.vlm_benchmark import build_vlm_benchmark
 from app.utils.vlm import enrich_keyframes_with_vlm
 
 app = FastAPI(title="EchoNotes AI - Backend API")
@@ -59,6 +65,8 @@ enriched_cache_path = TRANSCRIPTS_DIR / "enriched_segments_cache.json"
 slides_cache_path = TRANSCRIPTS_DIR / "slides_cache.json"
 topic_blocks_cache_path = TRANSCRIPTS_DIR / "topic_blocks_cache.json"
 smart_notes_cache_path = TRANSCRIPTS_DIR / "smart_notes_cache.md"
+pdf_text_cache_path = TRANSCRIPTS_DIR / "report_pdf_text_cache.txt"
+regression_set_path = DATA_DIR / "regression" / "echonotes_smoke.json"
 
 # Global workstation state
 state = {
@@ -85,7 +93,8 @@ state = {
     
     # Dataset generation state
     "dataset_status": "idle",       # idle, exporting, completed, error
-    "dataset_progress": 0
+    "dataset_progress": 0,
+    "last_metrics": {}
 }
 
 # Thread lock for pipeline execution
@@ -99,7 +108,7 @@ except Exception as exc:
 
 def clear_result_caches():
     """Remove processed outputs that should not leak across videos."""
-    for cache_file in [enriched_cache_path, slides_cache_path, topic_blocks_cache_path, smart_notes_cache_path]:
+    for cache_file in [enriched_cache_path, slides_cache_path, topic_blocks_cache_path, smart_notes_cache_path, pdf_text_cache_path]:
         try:
             if cache_file.exists():
                 cache_file.unlink()
@@ -168,6 +177,8 @@ def run_pipeline_thread(
 ):
     global state
     try:
+        run_started = time.perf_counter()
+        stage_times: Dict[str, float] = {}
         use_teams_transcript = bool(teams_transcript_path and teams_transcript_path.exists())
         needs_audio = (not use_teams_transcript) or analyze_acoustics
         
@@ -176,14 +187,17 @@ def run_pipeline_thread(
         state["stage"] = "Extracting 16kHz audio from the video..."
         state["progress"] = 10
         audio_path = None
+        stage_start = time.perf_counter()
         if needs_audio:
             audio_path = extract_audio_from_video(video_path)
+        stage_times["audio_extraction_sec"] = round(time.perf_counter() - stage_start, 3)
         time.sleep(0.5)
         
         # Stage 2: Transcribe
         state["stage"] = "Transcribing speech to text..."
         state["progress"] = 25
         
+        stage_start = time.perf_counter()
         if use_teams_transcript:
             state["stage"] = "Importing Teams transcript..."
             teams_segments = parse_teams_transcript(teams_transcript_path)
@@ -214,10 +228,12 @@ def run_pipeline_thread(
                 hotwords=hotwords,
                 language=speech_language
             )
+        stage_times["asr_sec"] = round(time.perf_counter() - stage_start, 3)
         
         # Stage 3: Acoustic labels
         state["stage"] = "Analyzing acoustic signals and emphasis..."
         state["progress"] = 60
+        stage_start = time.perf_counter()
         if analyze_acoustics and audio_path:
             enriched_segments = analyze_audio_acoustics(audio_path, raw_transcript["segments"])
             asr_metadata = raw_transcript.get("metadata", {})
@@ -241,11 +257,13 @@ def run_pipeline_thread(
                     "is_important": False
                 }
                 enriched_segments.append(copied)
+        stage_times["acoustic_sec"] = round(time.perf_counter() - stage_start, 3)
         time.sleep(0.5)
         
         # Stage 4: Visuals
         state["stage"] = f"Analyzing visual keyframes ({visual_mode})..."
         state["progress"] = 80
+        stage_start = time.perf_counter()
         if visual_mode.startswith("Transcript only"):
             slide_keyframes = [{
                 "timestamp_sec": 0.0,
@@ -272,6 +290,7 @@ def run_pipeline_thread(
                     model_name=vision_model,
                     max_frames=min(int(max_keyframes), 12),
                 )
+        stage_times["visual_sec"] = round(time.perf_counter() - stage_start, 3)
         time.sleep(0.5)
         
         # Stage 5: Finalization & Cache Save
@@ -299,6 +318,8 @@ def run_pipeline_thread(
             json.dump(cleaned_slide_keyframes, f, ensure_ascii=False, indent=2)
 
         metrics = {
+            **stage_times,
+            "total_pipeline_sec": round(time.perf_counter() - run_started, 3),
             "transcript_segments": len(cleaned_enriched_segments),
             "semantic_topic_blocks": len(topic_blocks),
             "keyframes": len(cleaned_slide_keyframes),
@@ -307,6 +328,7 @@ def run_pipeline_thread(
             "vision_model": vision_model if visual_mode.startswith("VLM") else None,
             "acoustic_enabled": analyze_acoustics,
         }
+        state["last_metrics"] = metrics
         if project_id:
             try:
                 save_project_artifacts(
@@ -454,7 +476,8 @@ def get_status():
         "generating_report": state["generating_report"],
         "report_started_at": state.get("report_started_at"),
         "dataset_status": state["dataset_status"],
-        "dataset_progress": state["dataset_progress"]
+        "dataset_progress": state["dataset_progress"],
+        "last_metrics": state.get("last_metrics", {})
     }
 
 @app.post("/api/upload/video")
@@ -593,13 +616,13 @@ def get_results():
 
 
 @app.get("/api/projects")
-def get_projects():
+def get_projects(search: str = ""):
     """List saved lecture projects from PostgreSQL."""
     try:
         state["database"] = db_health()
         if not state["database"].get("connected"):
             return {"database": state["database"], "projects": []}
-        return {"database": state["database"], "projects": list_projects()}
+        return {"database": state["database"], "projects": list_projects(query=search)}
     except Exception as exc:
         state["database"] = {"connected": False, "error": str(exc)}
         return {"database": state["database"], "projects": []}
@@ -679,6 +702,27 @@ def save_current_project():
         status="reported" if state.get("smart_notes") else "analyzed",
     )
     return {"status": "saved", "project_id": project_id}
+
+
+class ProjectMetadataUpdate(BaseModel):
+    title: Optional[str] = None
+    course_name: Optional[str] = None
+    tags: List[str] = []
+    description: Optional[str] = None
+
+
+@app.post("/api/projects/{project_id}/metadata")
+def update_project_metadata_endpoint(project_id: str, metadata: ProjectMetadataUpdate):
+    project = update_project_metadata(
+        project_id,
+        title=metadata.title,
+        course_name=metadata.course_name,
+        tags=metadata.tags,
+        description=metadata.description,
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+    return {"status": "saved", "project": project}
 
 @app.get("/api/report/markdown")
 def get_report_markdown():
@@ -780,7 +824,10 @@ def save_report(data: Dict[str, str]):
 @app.get("/api/report/pdf")
 def download_report_pdf():
     """Compiles and downloads study guide PDF."""
-    if not state["smart_notes"]:
+    report_markdown = state.get("smart_notes") or (
+        smart_notes_cache_path.read_text(encoding="utf-8") if smart_notes_cache_path.exists() else ""
+    )
+    if not report_markdown:
         raise HTTPException(status_code=400, detail="Generate the report markdown notes first.")
         
     try:
@@ -789,7 +836,7 @@ def download_report_pdf():
             slides = json.load(f)
             
         pdf_path = OUTPUTS_DIR / "EchoNotes_Report.pdf"
-        export_notes_pdf(state["smart_notes"], slides, pdf_path)
+        export_notes_pdf(report_markdown, slides, pdf_path)
         
         if not pdf_path.exists():
             raise HTTPException(status_code=500, detail="PDF compiler completed but did not produce a file.")
@@ -802,13 +849,47 @@ def download_report_pdf():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"PDF compiler error: {str(e)}")
 
+
+@app.post("/api/report/ingest-pdf")
+def ingest_report_pdf():
+    """Extract text from the exported PDF artifact and add it to chat retrieval context."""
+    pdf_path = OUTPUTS_DIR / "EchoNotes_Report.pdf"
+    report_markdown = state.get("smart_notes") or (
+        smart_notes_cache_path.read_text(encoding="utf-8") if smart_notes_cache_path.exists() else ""
+    )
+    if not pdf_path.exists():
+        if not report_markdown:
+            raise HTTPException(status_code=400, detail="Generate report notes before ingesting PDF.")
+        with open(slides_cache_path, "r", encoding="utf-8") as f:
+            slides = json.load(f)
+        export_notes_pdf(report_markdown, slides, pdf_path)
+
+    extracted = ""
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(pdf_path))
+        extracted = "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception:
+        extracted = report_markdown
+
+    extracted = (extracted or "").strip()
+    if not extracted and report_markdown:
+        extracted = report_markdown.strip()
+    if not extracted:
+        raise HTTPException(status_code=500, detail="PDF ingestion produced no text.")
+    pdf_text_cache_path.write_text(extracted, encoding="utf-8")
+    return {"status": "ingested", "characters": len(extracted), "source": str(pdf_path)}
+
 class ChatRequest(BaseModel):
     question: str
     model: str = OLLAMA_DEFAULT_MODEL
+    mode: str = "explain"
 
 @app.post("/api/chat")
 def run_chat(req: ChatRequest):
     """Queries grounded chat over notes and segments."""
+    chat_started = time.perf_counter()
     if not smart_notes_cache_path.exists() and not state["smart_notes"]:
         # Generate instant fallback notes to ground chat context
         if enriched_cache_path.exists() and slides_cache_path.exists():
@@ -836,6 +917,7 @@ def run_chat(req: ChatRequest):
         if slides_cache_path.exists():
             with open(slides_cache_path, "r", encoding="utf-8") as f:
                 slides = json.load(f)
+        pdf_text = pdf_text_cache_path.read_text(encoding="utf-8") if pdf_text_cache_path.exists() else ""
 
         try:
             rag_result = answer_with_langchain_rag(
@@ -845,10 +927,23 @@ def run_chat(req: ChatRequest):
                 req.model,
                 topic_blocks=topic_blocks,
                 slides=slides,
+                pdf_text=pdf_text,
+                query_mode=req.mode,
             )
+            latency_ms = int((time.perf_counter() - chat_started) * 1000)
+            rag_result["latency_ms"] = latency_ms
+            rag_result["mode"] = req.mode
             if state.get("active_project_id"):
-                add_chat_message(state["active_project_id"], "user", req.question)
-                add_chat_message(state["active_project_id"], "assistant", rag_result.get("answer", ""))
+                add_chat_message(state["active_project_id"], "user", req.question, query_mode=req.mode)
+                assistant_id = add_chat_message(
+                    state["active_project_id"],
+                    "assistant",
+                    rag_result.get("answer", ""),
+                    query_mode=req.mode,
+                    citations=rag_result.get("citations", []),
+                    latency_ms=latency_ms,
+                )
+                rag_result["message_id"] = assistant_id
             return rag_result
         except Exception as rag_error:
             # Keep the app usable even when Ollama embeddings or LangChain indexing fails.
@@ -861,11 +956,221 @@ def run_chat(req: ChatRequest):
             req.model
         )
         if state.get("active_project_id"):
-            add_chat_message(state["active_project_id"], "user", req.question)
-            add_chat_message(state["active_project_id"], "assistant", answer)
-        return {"answer": answer + fallback_note, "engine": "Custom grounded retrieval fallback", "sources": []}
+            add_chat_message(state["active_project_id"], "user", req.question, query_mode=req.mode)
+            assistant_id = add_chat_message(
+                state["active_project_id"],
+                "assistant",
+                answer,
+                query_mode=req.mode,
+                citations=[],
+                latency_ms=int((time.perf_counter() - chat_started) * 1000),
+            )
+        else:
+            assistant_id = None
+        return {
+            "answer": answer + fallback_note,
+            "engine": "Custom grounded retrieval fallback",
+            "sources": [],
+            "citations": [],
+            "mode": req.mode,
+            "latency_ms": int((time.perf_counter() - chat_started) * 1000),
+            "message_id": assistant_id,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/evaluation/summary")
+def get_evaluation_summary():
+    transcript = []
+    slides = []
+    topic_blocks = []
+    reference_segments = []
+    if enriched_cache_path.exists():
+        with open(enriched_cache_path, "r", encoding="utf-8") as f:
+            transcript = json.load(f)
+    if slides_cache_path.exists():
+        with open(slides_cache_path, "r", encoding="utf-8") as f:
+            slides = json.load(f)
+    if topic_blocks_cache_path.exists():
+        with open(topic_blocks_cache_path, "r", encoding="utf-8") as f:
+            topic_blocks = json.load(f)
+    if state.get("active_transcript_path") and Path(state["active_transcript_path"]).exists():
+        try:
+            reference_segments = parse_teams_transcript(Path(state["active_transcript_path"]))
+        except Exception:
+            reference_segments = []
+
+    transcript_quality = evaluate_transcript_quality(reference_segments, transcript) if reference_segments else {
+        "available": False,
+        "reason": "Upload a Teams VTT/SRT/TXT transcript as reference to compute WER/CER.",
+    }
+    speaker_roles = infer_speaker_roles(transcript)
+    speaker_role_preview = {
+        key: value for key, value in speaker_roles.items()
+        if key != "segments"
+    }
+    speaker_role_preview["sample_segments"] = [
+        {
+            "start": segment.get("start"),
+            "end": segment.get("end"),
+            "text": (segment.get("text") or "")[:220],
+            "speaker": segment.get("speaker"),
+            "speaker_role": segment.get("speaker_role"),
+        }
+        for segment in speaker_roles.get("segments", [])[:20]
+    ]
+    vlm_benchmark = build_vlm_benchmark(slides, transcript)
+    ablation = build_ablation_snapshot(transcript, slides, topic_blocks, vlm_benchmark, transcript_quality)
+    regression_set = load_regression_set_summary()
+    metrics = {
+        **(state.get("last_metrics") or {}),
+        "transcript_segments": len(transcript),
+        "topic_blocks": len(topic_blocks),
+        "keyframes": len(slides),
+        "pdf_ingested": pdf_text_cache_path.exists(),
+        "evaluations_stored": len(list_evaluation_records(state.get("active_project_id"), limit=20)) if state.get("active_project_id") else 0,
+    }
+    return {
+        "metrics": metrics,
+        "transcript_quality": transcript_quality,
+        "speaker_roles": speaker_role_preview,
+        "vlm_benchmark": vlm_benchmark,
+        "ablation": ablation,
+        "regression_set": regression_set,
+    }
+
+
+def build_ablation_snapshot(
+    transcript: List[Dict[str, Any]],
+    slides: List[Dict[str, Any]],
+    topic_blocks: List[Dict[str, Any]],
+    vlm_benchmark: Dict[str, Any],
+    transcript_quality: Dict[str, Any],
+) -> Dict[str, Any]:
+    transcript_conf = min(1.0, len(topic_blocks or []) / 8) if transcript else 0.0
+    ocr_conf = float(vlm_benchmark.get("avg_ocr_confidence") or 0.0)
+    vlm_conf = float(vlm_benchmark.get("avg_vlm_confidence") or 0.0)
+    fused_conf = float(vlm_benchmark.get("avg_ocr_vlm_confidence") or max(ocr_conf, vlm_conf))
+    teams_bonus = 0.1 if transcript_quality.get("available") else 0.0
+    return {
+        "engine": "deterministic ablation proxy; use human rubric/regression set for final scoring",
+        "rows": [
+            {
+                "mode": "transcript_only",
+                "available": bool(transcript),
+                "evidence_units": len(transcript or []),
+                "confidence": round(transcript_conf, 3),
+            },
+            {
+                "mode": "ocr_only",
+                "available": any((slide.get("ocr_text") or "").strip() for slide in slides or []),
+                "evidence_units": sum(1 for slide in slides or [] if (slide.get("ocr_text") or "").strip()),
+                "confidence": round(ocr_conf, 3),
+            },
+            {
+                "mode": "vlm_only",
+                "available": any((slide.get("vlm_description") or "").strip() for slide in slides or []),
+                "evidence_units": sum(1 for slide in slides or [] if (slide.get("vlm_description") or "").strip()),
+                "confidence": round(vlm_conf, 3),
+            },
+            {
+                "mode": "ocr_plus_vlm_plus_transcript",
+                "available": bool(transcript and slides),
+                "evidence_units": len(transcript or []) + len(slides or []),
+                "confidence": round(min(1.0, max(transcript_conf, fused_conf) + teams_bonus), 3),
+            },
+        ],
+    }
+
+
+def load_regression_set_summary() -> Dict[str, Any]:
+    if not regression_set_path.exists():
+        return {"available": False, "cases": 0, "path": str(regression_set_path)}
+    try:
+        payload = json.loads(regression_set_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"available": False, "cases": 0, "path": str(regression_set_path), "error": str(exc)}
+    cases = payload.get("cases") or []
+    return {
+        "available": True,
+        "name": payload.get("name", "EchoNotes regression set"),
+        "cases": len(cases),
+        "expected_topics": sum(len(case.get("expected_topics") or []) for case in cases),
+        "expected_terms": sum(len(case.get("expected_terms") or []) for case in cases),
+        "path": str(regression_set_path),
+    }
+
+
+class ChatFeedbackRequest(BaseModel):
+    message_id: Optional[str] = None
+    rating: str
+    comment: str = ""
+
+
+@app.post("/api/chat/feedback")
+def submit_chat_feedback(feedback: ChatFeedbackRequest):
+    if feedback.message_id:
+        rate_chat_message(feedback.message_id, feedback.rating)
+    record_id = add_evaluation_record(
+        state.get("active_project_id"),
+        "chat_feedback",
+        {"message_id": feedback.message_id, "rating": feedback.rating, "comment": feedback.comment},
+    )
+    return {"status": "saved", "evaluation_id": record_id}
+
+
+@app.get("/api/export/quiz")
+def export_quiz_bank():
+    if not topic_blocks_cache_path.exists():
+        raise HTTPException(status_code=400, detail="Run analysis first to create semantic topic blocks.")
+    topic_blocks = json.loads(topic_blocks_cache_path.read_text(encoding="utf-8"))
+    path = OUTPUTS_DIR / "EchoNotes_Quiz_Bank.json"
+    write_quiz_json(topic_blocks, path)
+    return FileResponse(str(path), media_type="application/json", filename=path.name)
+
+
+@app.get("/api/export/anki")
+def export_anki_cards():
+    if not topic_blocks_cache_path.exists():
+        raise HTTPException(status_code=400, detail="Run analysis first to create semantic topic blocks.")
+    topic_blocks = json.loads(topic_blocks_cache_path.read_text(encoding="utf-8"))
+    path = OUTPUTS_DIR / "EchoNotes_Anki.tsv"
+    write_anki_tsv(topic_blocks, path)
+    return FileResponse(str(path), media_type="text/tab-separated-values", filename=path.name)
+
+
+@app.get("/api/evaluation/regression-set")
+def get_regression_set():
+    if not regression_set_path.exists():
+        raise HTTPException(status_code=404, detail="Regression smoke set is not available.")
+    return FileResponse(str(regression_set_path), media_type="application/json", filename=regression_set_path.name)
+
+
+@app.get("/api/deployment/readiness")
+def deployment_readiness():
+    return {
+        "worker_queue": {
+            "current": "FastAPI BackgroundTasks/threaded local worker",
+            "planned": "Redis + RQ/Celery worker service",
+            "ready": False,
+        },
+        "storage": {
+            "current": "local filesystem",
+            "planned": "Azure Blob Storage or S3 adapter",
+            "ready": False,
+        },
+        "docker": {
+            "current": "PostgreSQL service in docker-compose",
+            "planned": "backend/frontend/worker services in docker-compose",
+            "ready": False,
+        },
+        "auth": {
+            "current": "Microsoft Graph device flow for Teams import only",
+            "planned": "local user profile / enterprise auth",
+            "ready": False,
+        },
+    }
 
 @app.get("/api/video")
 def get_video_stream():
@@ -1085,7 +1390,7 @@ def get_ollama_models():
 def clear_session_cache():
     """Clears all session caches, raw uploads, and output data."""
     global state
-    for cache_file in [enriched_cache_path, slides_cache_path, topic_blocks_cache_path, smart_notes_cache_path]:
+    for cache_file in [enriched_cache_path, slides_cache_path, topic_blocks_cache_path, smart_notes_cache_path, pdf_text_cache_path]:
         try:
             if cache_file.exists():
                 cache_file.unlink()
@@ -1118,7 +1423,8 @@ def clear_session_cache():
         "generating_report": False,
         
         "dataset_status": "idle",
-        "dataset_progress": 0
+        "dataset_progress": 0,
+        "last_metrics": {}
     }
     
     return {"status": "cleared"}

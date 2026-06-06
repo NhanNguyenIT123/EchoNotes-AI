@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000/api';
+type Citation = { label: string; source?: string; title?: string; timestamp?: string; start?: number | null; snippet?: string };
+type ChatItem = { role: 'user' | 'assistant'; content: string; citations?: Citation[]; engine?: string; message_id?: string; latency_ms?: number; mode?: string };
 
 // Simple Markdown Renderer component to avoid third-party HTML/Vite build friction
 function SimpleMarkdown({ markdown }: { markdown: string }) {
@@ -116,6 +118,10 @@ export default function App() {
   const [uploadStatusText, setUploadStatusText] = useState('');
   const [projects, setProjects] = useState<any[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [projectSearch, setProjectSearch] = useState('');
+  const [projectCourse, setProjectCourse] = useState('');
+  const [projectTags, setProjectTags] = useState('');
+  const [projectDescription, setProjectDescription] = useState('');
 
   // Pipeline execution state
   const [systemStatus, setSystemStatus] = useState({
@@ -135,7 +141,7 @@ export default function App() {
   });
 
   // Multimodal outputs
-  const [activeTab, setActiveTab] = useState<'notes' | 'visual' | 'playback' | 'chat'>('notes');
+  const [activeTab, setActiveTab] = useState<'notes' | 'visual' | 'playback' | 'chat' | 'evaluation'>('notes');
   const [transcript, setTranscript] = useState<any[]>([]);
   const [slides, setSlides] = useState<any[]>([]);
   const [topicBlocks, setTopicBlocks] = useState<any[]>([]);
@@ -149,9 +155,11 @@ export default function App() {
   const [focusMode, setFocusMode] = useState(false);
 
   // Grounded Chat state
-  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+  const [chatHistory, setChatHistory] = useState<ChatItem[]>([]);
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const [chatMode, setChatMode] = useState('explain');
+  const [evaluationSummary, setEvaluationSummary] = useState<any | null>(null);
 
   // Ref handles
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -184,6 +192,14 @@ export default function App() {
     const interval = setInterval(pollStatus, 1200);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const project = projects.find(p => p.id === selectedProjectId);
+    if (!project) return;
+    setProjectCourse(project.course_name || '');
+    setProjectTags((project.tags || []).join(', '));
+    setProjectDescription(project.description || '');
+  }, [selectedProjectId, projects]);
 
   // Fetch results when status completes
   useEffect(() => {
@@ -218,7 +234,7 @@ export default function App() {
 
   const fetchProjects = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/projects`);
+      const res = await axios.get(`${API_BASE}/projects`, { params: { search: projectSearch } });
       setProjects(res.data.projects || []);
       if (!selectedProjectId && res.data.projects?.length) {
         setSelectedProjectId(res.data.projects[0].id);
@@ -227,6 +243,11 @@ export default function App() {
       setProjects([]);
     }
   };
+
+  useEffect(() => {
+    const timer = setTimeout(() => fetchProjects(), 350);
+    return () => clearTimeout(timer);
+  }, [projectSearch]);
 
   const fetchResults = async () => {
     try {
@@ -371,7 +392,14 @@ export default function App() {
       setSlides(res.data.project.slides || []);
       setTopicBlocks(res.data.project.topic_blocks || []);
       setReportMarkdown(res.data.project.report_markdown || '');
-      setChatHistory((res.data.chat || []).map((m: any) => ({ role: m.role, content: m.content })));
+      setChatHistory((res.data.chat || []).map((m: any) => ({
+        role: m.role,
+        content: m.content,
+        citations: m.citations || [],
+        mode: m.query_mode,
+        message_id: m.id,
+        latency_ms: m.latency_ms
+      })));
       pollStatus();
       fetchProjects();
     } catch (err: any) {
@@ -387,6 +415,51 @@ export default function App() {
     } catch (err: any) {
       alert(`Save project failed: ${err.response?.data?.detail || err.message}`);
     }
+  };
+
+  const handleUpdateProjectMetadata = async () => {
+    if (!selectedProjectId) return;
+    try {
+      await axios.post(`${API_BASE}/projects/${selectedProjectId}/metadata`, {
+        course_name: projectCourse,
+        tags: projectTags.split(',').map(tag => tag.trim()).filter(Boolean),
+        description: projectDescription
+      });
+      fetchProjects();
+    } catch (err: any) {
+      alert(`Metadata save failed: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const fetchEvaluationSummary = async () => {
+    try {
+      const res = await axios.get(`${API_BASE}/evaluation/summary`);
+      setEvaluationSummary(res.data);
+    } catch {
+      setEvaluationSummary(null);
+    }
+  };
+
+  const handleIngestPdf = async () => {
+    try {
+      await axios.post(`${API_BASE}/report/ingest-pdf`);
+      await fetchEvaluationSummary();
+      alert('PDF artifact ingested into grounded Q&A context.');
+    } catch (err: any) {
+      alert(`PDF ingest failed: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const downloadFromEndpoint = (endpoint: string) => {
+    window.open(`${API_BASE}${endpoint}`, '_blank');
+  };
+
+  const handleChatFeedback = async (messageId: string | undefined, rating: string) => {
+    if (!messageId) return;
+    try {
+      await axios.post(`${API_BASE}/chat/feedback`, { message_id: messageId, rating, comment: '' });
+      setChatHistory(prev => prev.map(msg => msg.message_id === messageId ? { ...msg, content: `${msg.content}\n\nFeedback: ${rating}` } : msg));
+    } catch {}
   };
 
   // --- REPORT NOTES ACTIONS ---
@@ -482,6 +555,12 @@ export default function App() {
     });
   }, [activeTab, activeTranscriptIndex]);
 
+  useEffect(() => {
+    if (activeTab === 'evaluation') {
+      fetchEvaluationSummary();
+    }
+  }, [activeTab]);
+
   // --- CHAT ACTIONS ---
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -495,13 +574,18 @@ export default function App() {
     try {
       const res = await axios.post(`${API_BASE}/chat`, {
         question: userMsg,
-        model: llmModel
+        model: llmModel,
+        mode: chatMode
       });
-      const engine = res.data.engine ? `\n\nEngine: ${res.data.engine}` : '';
-      const sources = Array.isArray(res.data.sources) && res.data.sources.length
-        ? `\nSources: ${res.data.sources.join(', ')}`
-        : '';
-      setChatHistory(prev => [...prev, { role: 'assistant', content: `${res.data.answer}${engine}${sources}` }]);
+      setChatHistory(prev => [...prev, {
+        role: 'assistant',
+        content: res.data.answer,
+        citations: res.data.citations || [],
+        engine: res.data.engine,
+        mode: res.data.mode,
+        latency_ms: res.data.latency_ms,
+        message_id: res.data.message_id
+      }]);
     } catch (err: any) {
       const errMsg = err.response?.data?.detail || err.message || 'Error communicating with AI.';
       setChatHistory(prev => [...prev, { role: 'assistant', content: `Chat Grounding Error: ${errMsg}` }]);
@@ -542,6 +626,14 @@ export default function App() {
             </span>
           </div>
 
+          <input
+            className="form-input"
+            style={{ marginBottom: '0.6rem' }}
+            placeholder="Filter by course, tag, title..."
+            value={projectSearch}
+            onChange={e => setProjectSearch(e.target.value)}
+          />
+
           <select
             className="form-select"
             value={selectedProjectId}
@@ -567,6 +659,15 @@ export default function App() {
               Save
             </button>
           </div>
+
+          {selectedProjectId && (
+            <div style={{ display: 'grid', gap: '0.5rem', marginTop: '0.75rem' }}>
+              <input className="form-input" placeholder="Course name" value={projectCourse} onChange={e => setProjectCourse(e.target.value)} />
+              <input className="form-input" placeholder="Tags: genai, bosch, training" value={projectTags} onChange={e => setProjectTags(e.target.value)} />
+              <textarea className="form-textarea" rows={2} placeholder="Project description" value={projectDescription} onChange={e => setProjectDescription(e.target.value)} />
+              <button className="btn-secondary" onClick={handleUpdateProjectMetadata}>Save Metadata</button>
+            </div>
+          )}
         </div>
 
         {/* Data Source Selector */}
@@ -924,6 +1025,9 @@ export default function App() {
             <button className={`tab-btn ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>
               AI Grounded Q&A
             </button>
+            <button className={`tab-btn ${activeTab === 'evaluation' ? 'active' : ''}`} onClick={() => setActiveTab('evaluation')}>
+              Evaluation Lab
+            </button>
           </nav>
 
           {/* Tabs Window */}
@@ -976,6 +1080,15 @@ export default function App() {
                         <button className="btn-secondary" onClick={handleDownloadPDF} title="Export PDF">
                           <FileDown size={14} /> PDF
                         </button>
+                        <button className="btn-secondary" onClick={handleIngestPdf} title="Ingest exported PDF into chat context">
+                          PDF {'->'} RAG
+                        </button>
+                        <button className="btn-secondary" onClick={() => downloadFromEndpoint('/export/quiz')} title="Download quiz bank JSON">
+                          Quiz JSON
+                        </button>
+                        <button className="btn-secondary" onClick={() => downloadFromEndpoint('/export/anki')} title="Download Anki TSV">
+                          Anki TSV
+                        </button>
                       </>
                     )}
                   </div>
@@ -1003,7 +1116,7 @@ export default function App() {
                           </span>
                           <strong>{block.title || `Topic ${idx + 1}`}</strong>
                           <span className="semantic-topic-meta">
-                            {block.segment_count || 0} segments · {block.word_count || 0} words
+                            {block.segment_count || 0} segments / {block.word_count || 0} words
                           </span>
                           <span className="semantic-topic-keywords">
                             {(block.keywords || []).slice(0, 5).map((kw: string) => `#${kw}`).join(' ')}
@@ -1188,6 +1301,29 @@ export default function App() {
                         <div className="chat-bubble-content">
                           {msg.content}
                         </div>
+                        {msg.role === 'assistant' && (
+                          <div className="chat-citation-area">
+                            {msg.engine && <span className="chat-engine">{msg.engine}{msg.latency_ms ? ` · ${msg.latency_ms}ms` : ''}</span>}
+                            {(msg.citations || []).map((citation, cidx) => (
+                              <button
+                                key={`${citation.label}-${cidx}`}
+                                className="citation-chip"
+                                onClick={() => typeof citation.start === 'number' ? handleSeekVideo(citation.start) : undefined}
+                                disabled={typeof citation.start !== 'number'}
+                                title={citation.snippet || citation.label}
+                              >
+                                {citation.timestamp && citation.timestamp !== 'report' ? citation.timestamp : 'report'} · {citation.title || citation.source || 'source'}
+                              </button>
+                            ))}
+                            {msg.message_id && (
+                              <div className="feedback-row">
+                                <button onClick={() => handleChatFeedback(msg.message_id, 'correct')}>Correct</button>
+                                <button onClick={() => handleChatFeedback(msg.message_id, 'incomplete')}>Incomplete</button>
+                                <button onClick={() => handleChatFeedback(msg.message_id, 'hallucinated')}>Hallucinated</button>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1213,6 +1349,13 @@ export default function App() {
                 </div>
 
                 <form className="chat-input-panel" onSubmit={handleSendChat}>
+                  <select className="chat-mode-select" value={chatMode} onChange={e => setChatMode(e.target.value)} disabled={chatLoading}>
+                    <option value="explain">Explain concept</option>
+                    <option value="find_moment">Find exact moment</option>
+                    <option value="quiz">Generate quiz</option>
+                    <option value="summarize_range">Summarize range</option>
+                    <option value="compare_visual">Compare slide vs transcript</option>
+                  </select>
                   <input 
                     type="text" 
                     className="chat-text-input" 
@@ -1225,6 +1368,91 @@ export default function App() {
                     Send Query
                   </button>
                 </form>
+              </div>
+            )}
+
+            {activeTab === 'evaluation' && (
+              <div className="evaluation-grid">
+                <div className="glass-panel eval-card">
+                  <div className="eval-card-header">
+                    <h3>Pipeline Metrics</h3>
+                    <button className="btn-secondary" onClick={fetchEvaluationSummary}>Refresh</button>
+                  </div>
+                  <div className="metric-grid">
+                    {Object.entries(evaluationSummary?.metrics || {}).map(([key, value]) => (
+                      <div key={key} className="metric-tile">
+                        <span>{key.replace(/_/g, ' ')}</span>
+                        <strong>{String(value)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="glass-panel eval-card">
+                  <h3>Transcript Quality</h3>
+                  {evaluationSummary?.transcript_quality?.available ? (
+                    <div className="metric-grid">
+                      <div className="metric-tile"><span>WER</span><strong>{evaluationSummary.transcript_quality.wer}</strong></div>
+                      <div className="metric-tile"><span>CER</span><strong>{evaluationSummary.transcript_quality.cer}</strong></div>
+                      <div className="metric-tile"><span>Reference words</span><strong>{evaluationSummary.transcript_quality.reference_words}</strong></div>
+                      <div className="metric-tile"><span>Hypothesis words</span><strong>{evaluationSummary.transcript_quality.hypothesis_words}</strong></div>
+                    </div>
+                  ) : (
+                    <p className="eval-muted">{evaluationSummary?.transcript_quality?.reason || 'Upload Teams transcript to compute WER/CER.'}</p>
+                  )}
+                </div>
+
+                <div className="glass-panel eval-card">
+                  <h3>VLM Benchmark</h3>
+                  <div className="metric-grid">
+                    <div className="metric-tile"><span>Slides evaluated</span><strong>{evaluationSummary?.vlm_benchmark?.slides_evaluated ?? 0}</strong></div>
+                    <div className="metric-tile"><span>OCR coverage</span><strong>{evaluationSummary?.vlm_benchmark?.ocr_coverage ?? 0}</strong></div>
+                    <div className="metric-tile"><span>VLM coverage</span><strong>{evaluationSummary?.vlm_benchmark?.vlm_coverage ?? 0}</strong></div>
+                    <div className="metric-tile"><span>OCR+VLM confidence</span><strong>{evaluationSummary?.vlm_benchmark?.avg_ocr_vlm_confidence ?? 0}</strong></div>
+                  </div>
+                </div>
+
+                <div className="glass-panel eval-card">
+                  <h3>Ablation Snapshot</h3>
+                  <p className="eval-muted">{evaluationSummary?.ablation?.engine || 'Run analysis to build ablation data.'}</p>
+                  <div className="speaker-list">
+                    {(evaluationSummary?.ablation?.rows || []).map((row: any) => (
+                      <div className="speaker-row" key={row.mode}>
+                        <span>{row.mode.replace(/_/g, ' ')}</span>
+                        <strong>{row.confidence}</strong>
+                        <em>{row.evidence_units} units</em>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="glass-panel eval-card">
+                  <h3>Speaker Role Pass</h3>
+                  <p className="eval-muted">{evaluationSummary?.speaker_roles?.engine || 'No speaker role data yet.'}</p>
+                  <div className="speaker-list">
+                    {(evaluationSummary?.speaker_roles?.speakers || []).slice(0, 8).map((speaker: any, idx: number) => (
+                      <div className="speaker-row" key={idx}>
+                        <span>{speaker.speaker}</span>
+                        <strong>{speaker.role}</strong>
+                        <em>{speaker.segments} segments</em>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="glass-panel eval-card">
+                  <h3>Exports & Readiness</h3>
+                  <div className="eval-actions">
+                    <button className="btn-secondary" onClick={handleIngestPdf}>Ingest PDF for Q&A</button>
+                    <button className="btn-secondary" onClick={() => downloadFromEndpoint('/export/quiz')}>Download Quiz JSON</button>
+                    <button className="btn-secondary" onClick={() => downloadFromEndpoint('/export/anki')}>Download Anki TSV</button>
+                    <button className="btn-secondary" onClick={() => window.open(`${API_BASE}/evaluation/regression-set`, '_blank')}>Regression Set JSON</button>
+                    <button className="btn-secondary" onClick={() => window.open(`${API_BASE}/deployment/readiness`, '_blank')}>Cloud/Worker Readiness JSON</button>
+                  </div>
+                  <p className="eval-muted">
+                    Regression set: {evaluationSummary?.regression_set?.available ? `${evaluationSummary.regression_set.cases} cases` : 'not available'}
+                  </p>
+                </div>
               </div>
             )}
 
