@@ -2,6 +2,9 @@ import os
 import sys
 from pathlib import Path
 import torch
+from app.env import load_local_env
+
+load_local_env()
 
 # Base Directories
 BASE_DIR = Path(__file__).resolve().parent.parent

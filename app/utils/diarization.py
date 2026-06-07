@@ -88,8 +88,14 @@ def apply_optional_diarization(audio_path: Path, segments: List[Dict[str, Any]])
         }
 
     try:
+        import torch
         model_name = os.getenv("PYANNOTE_MODEL", "pyannote/speaker-diarization-3.1")
         pipeline = Pipeline.from_pretrained(model_name, use_auth_token=token)
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        try:
+            pipeline.to(torch.device(device))
+        except Exception:
+            device = "cpu"
         diarization = pipeline(str(audio_path))
         turns = []
         for turn, _, speaker in diarization.itertracks(yield_label=True):
@@ -109,6 +115,7 @@ def apply_optional_diarization(audio_path: Path, segments: List[Dict[str, Any]])
                 "provider": "pyannote",
                 "status": "completed",
                 "model": model_name,
+                "device": device,
                 "turns": len(turns),
                 "speakers": len({turn["speaker"] for turn in turns}),
             },
