@@ -970,7 +970,11 @@ export default function App() {
             <option value="base">Base</option>
             <option value="small">Small (Default)</option>
             <option value="medium">Medium</option>
+            <option value="large-v3">Large-v3 (Best quality, heavy)</option>
           </select>
+          <p className="input-help">
+            Large-v3 improves Vietnamese and mixed-language ASR but needs more VRAM/RAM and downloads on first use.
+          </p>
         </div>
 
         <div className="input-group">
