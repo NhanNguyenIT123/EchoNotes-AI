@@ -240,6 +240,10 @@ export default function App() {
   const handleSpokenLanguageChange = (language: string) => {
     setSpokenLanguage(language);
     setAsrPrompt(languagePrompts[language] || languagePrompts.auto);
+    const staleHotwords = ['inode allocation partition', 'inode', 'allocation', 'partition'];
+    if (language === 'vi' && staleHotwords.some(term => hotwords.toLowerCase().includes(term))) {
+      setHotwords('');
+    }
   };
 
   // Teams Link states
