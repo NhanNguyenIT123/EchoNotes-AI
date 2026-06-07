@@ -536,6 +536,10 @@ export default function App() {
       setTopicBlocks([]);
       setReportMarkdown('');
       setChatHistory([]);
+      setSelectedProjectId('');
+      setProjectCourse('');
+      setProjectTags('');
+      setProjectDescription('');
       pollStatus();
       fetchProjects();
     } catch (err: any) {
@@ -719,7 +723,7 @@ export default function App() {
 
   const activeVideoSrc = systemStatus.active_video_name
     ? `${API_BASE}/video?v=${encodeURIComponent(systemStatus.active_video_name)}`
-    : `${API_BASE}/video`;
+    : '';
 
   useEffect(() => {
     if (activeTab !== 'playback' || pendingSeekTime === null || !videoRef.current) return;
