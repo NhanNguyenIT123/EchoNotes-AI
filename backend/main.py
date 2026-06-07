@@ -845,6 +845,17 @@ def generate_report_worker(method: str, model_name: str):
     global state
     state["generating_report"] = True
     state["report_started_at"] = time.time()
+    
+    # Aggressively release any leftover GPU memory from ASR (Whisper) or OCR (EasyOCR)
+    try:
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
     try:
         if not (enriched_cache_path.exists() and slides_cache_path.exists()):
             raise Exception("No analysis results found. Run pipeline before note synthesis.")
