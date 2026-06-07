@@ -7,4 +7,5 @@ langchain-chroma>=0.1.0
 faiss-cpu>=1.8.0
 azure-storage-blob>=12.20.0
 boto3>=1.34.0
-pyannote.audio>=3.3.0
+# Keep pyannote on the 3.x stack for the current Torch/Numpy runtime.
+pyannote.audio>=3.3.0,<4.0.0
