@@ -219,8 +219,8 @@ export default function App() {
   const [llmModel, setLlmModel] = useState('qwen2.5:7b-instruct');
   const [visionModel, setVisionModel] = useState('llava:7b');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
-  const [spokenLanguage, setSpokenLanguage] = useState('en');
-  const [asrPrompt, setAsrPrompt] = useState('English technical lecture. Preserve exact English terms.');
+  const [spokenLanguage, setSpokenLanguage] = useState('auto');
+  const [asrPrompt, setAsrPrompt] = useState('Technical lecture. Preserve the speaker\'s original language. Keep technical terms and code identifiers unchanged. Do not translate.');
   const [hotwords, setHotwords] = useState('');
   const [visualMode, setVisualMode] = useState('Fast: capture keyframes, no OCR');
   const [ssimSensitivity, setSsimSensitivity] = useState(0.94);
@@ -230,6 +230,17 @@ export default function App() {
   const [acousticToggle, setAcousticToggle] = useState(false);
   const [diarizationToggle, setDiarizationToggle] = useState(false);
   const [useOsGlossary, setUseOsGlossary] = useState(true);
+
+  const languagePrompts: Record<string, string> = {
+    auto: 'Technical lecture. Preserve the speaker\'s original language. Keep technical terms and code identifiers unchanged. Do not translate.',
+    en: 'English technical lecture. Preserve exact English terms, code identifiers, product names, and acronyms. Do not translate.',
+    vi: 'Bài giảng tiếng Việt. Nhận diện và giữ nguyên tiếng Việt; chỉ giữ thuật ngữ tiếng Anh/code identifier nếu người nói dùng. Không dịch sang tiếng Anh.'
+  };
+
+  const handleSpokenLanguageChange = (language: string) => {
+    setSpokenLanguage(language);
+    setAsrPrompt(languagePrompts[language] || languagePrompts.auto);
+  };
 
   // Teams Link states
   const [teamsUrl, setTeamsUrl] = useState('');
@@ -978,10 +989,10 @@ export default function App() {
 
         <div className="input-group">
           <label className="input-label">Spoken Language</label>
-          <select className="form-select" value={spokenLanguage} onChange={e => setSpokenLanguage(e.target.value)}>
-            <option value="en">English (Recommended)</option>
-            <option value="vi">Vietnamese (Forced)</option>
-            <option value="auto">Auto Detect (can misread accents)</option>
+          <select className="form-select" value={spokenLanguage} onChange={e => handleSpokenLanguageChange(e.target.value)}>
+            <option value="auto">Auto Detect / preserve original language</option>
+            <option value="vi">Vietnamese (force Vietnamese ASR)</option>
+            <option value="en">English (force English ASR)</option>
           </select>
         </div>
 
