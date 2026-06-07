@@ -64,5 +64,5 @@ FRAME_CHECK_INTERVAL = 2.0      # Sample one frame every 2.0 seconds (very light
 
 # Ollama API Configuration
 OLLAMA_API_URL = "http://localhost:11434/api"
-OLLAMA_DEFAULT_MODEL = "qwen2.5:7b-instruct"
+OLLAMA_DEFAULT_MODEL = "qwen2.5:1.5b-instruct"
 OLLAMA_FALLBACK_MODEL = "llama3:latest"

@@ -229,7 +229,7 @@ export default function App() {
   // Sidebar states
   const [sourceMode, setSourceMode] = useState<'upload' | 'teams' | 'demo'>('upload');
   const [whisperModel, setWhisperModel] = useState('small');
-  const [llmModel, setLlmModel] = useState('qwen2.5:7b-instruct');
+  const [llmModel, setLlmModel] = useState('qwen2.5:1.5b-instruct');
   const [visionModel, setVisionModel] = useState('llava:7b');
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [spokenLanguage, setSpokenLanguage] = useState('auto');
@@ -326,8 +326,10 @@ export default function App() {
       .then(res => {
         if (res.data.models && res.data.models.length > 0) {
           setOllamaModels(res.data.models);
-          // Set default to qwen if available, or first model
-          if (res.data.models.includes('qwen2.5:7b-instruct')) {
+          // Set default to qwen 1.5B if available (safer for RAM/VRAM), then 7B, or first model
+          if (res.data.models.includes('qwen2.5:1.5b-instruct')) {
+            setLlmModel('qwen2.5:1.5b-instruct');
+          } else if (res.data.models.includes('qwen2.5:7b-instruct')) {
             setLlmModel('qwen2.5:7b-instruct');
           } else {
             setLlmModel(res.data.models[0]);
