@@ -49,7 +49,7 @@ from app.utils.diarization import apply_optional_diarization, infer_speaker_role
 from app.utils.vlm_benchmark import build_vlm_benchmark
 from app.utils.vlm import enrich_keyframes_with_vlm
 from app.job_queue import (
-    configured_job_backend, create_job, enqueue_rq_job, latest_job_status,
+    configured_job_backend, create_job, enqueue_rq_job,
     read_job_status, update_job_status
 )
 from app.storage import get_storage_backend
@@ -125,20 +125,19 @@ def clear_result_caches():
 def load_initial_cache():
     """Restores the latest finished processing state from cache if available."""
     global state
+    raw_videos = sorted(
+        list(RAW_DIR.glob("*.mp4")) + list(RAW_DIR.glob("*.mkv")) + list(RAW_DIR.glob("*.avi")) + list(RAW_DIR.glob("*.mov")),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True
+    )
+    if raw_videos:
+        state["active_video_path"] = str(raw_videos[0])
+        state["active_video_name"] = raw_videos[0].name
+
     if enriched_cache_path.exists() and slides_cache_path.exists():
         state["status"] = "completed"
         state["stage"] = "Loaded from cache"
         state["progress"] = 100
-        
-        # Look for the latest uploaded video in RAW_DIR to hook up
-        raw_videos = sorted(
-            list(RAW_DIR.glob("*.mp4")) + list(RAW_DIR.glob("*.mkv")) + list(RAW_DIR.glob("*.avi")) + list(RAW_DIR.glob("*.mov")),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True
-        )
-        if raw_videos:
-            state["active_video_path"] = str(raw_videos[0])
-            state["active_video_name"] = raw_videos[0].name
         
         # Load cached report markdown if exists
         if smart_notes_cache_path.exists():
@@ -517,7 +516,7 @@ def get_status():
     # Check if files physically exist to sync completed state if changed on disk
     if state["status"] == "idle" and enriched_cache_path.exists() and slides_cache_path.exists():
         load_initial_cache()
-    active_job = read_job_status(state.get("active_job_id")) or latest_job_status()
+    active_job = read_job_status(state.get("active_job_id"))
     if active_job and active_job.get("status") in {"queued", "processing", "fallback"}:
         state["status"] = "processing"
         state["stage"] = active_job.get("stage") or state["stage"]
