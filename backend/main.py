@@ -10,8 +10,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Generator
 
-from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
+from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -1410,12 +1410,91 @@ def sync_current_artifacts():
     return {"provider": os.getenv("ECHONOTES_STORAGE_PROVIDER", "local"), "artifacts": artifacts}
 
 @app.get("/api/video")
-def get_video_stream():
-    """Streams the active video file."""
+def get_video_stream(request: Request):
+    """Streams the active video file with byte-range support for HTML5 playback."""
     video_path_str = state["active_video_path"]
     if not video_path_str or not Path(video_path_str).exists():
         raise HTTPException(status_code=404, detail="No video file loaded in session.")
-    return FileResponse(video_path_str, media_type="video/mp4")
+
+    video_path = Path(video_path_str)
+    file_size = video_path.stat().st_size
+    range_header = request.headers.get("range")
+    media_type = _video_media_type(video_path)
+
+    if not range_header:
+        return FileResponse(
+            str(video_path),
+            media_type=media_type,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Cache-Control": "no-store",
+            },
+        )
+
+    match = re.match(r"bytes=(\d*)-(\d*)", range_header)
+    if not match:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{file_size}"})
+
+    start_s, end_s = match.groups()
+    start = int(start_s) if start_s else 0
+    end = int(end_s) if end_s else file_size - 1
+    end = min(end, file_size - 1)
+    if start >= file_size or start > end:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{file_size}"})
+
+    chunk_size = end - start + 1
+
+    def iter_file() -> Generator[bytes, None, None]:
+        with video_path.open("rb") as f:
+            f.seek(start)
+            remaining = chunk_size
+            while remaining > 0:
+                data = f.read(min(1024 * 1024, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    return StreamingResponse(
+        iter_file(),
+        status_code=206,
+        media_type=media_type,
+        headers={
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(chunk_size),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+def _video_media_type(path: Path) -> str:
+    suffix = path.suffix.lower()
+    if suffix == ".webm":
+        return "video/webm"
+    if suffix == ".mov":
+        return "video/quicktime"
+    if suffix in {".mkv", ".avi"}:
+        return "video/mp4"
+    return "video/mp4"
+
+
+@app.head("/api/video")
+def head_video_stream():
+    """Returns video metadata headers for browsers that probe before playback."""
+    video_path_str = state["active_video_path"]
+    if not video_path_str or not Path(video_path_str).exists():
+        raise HTTPException(status_code=404, detail="No video file loaded in session.")
+    video_path = Path(video_path_str)
+    return Response(
+        status_code=200,
+        media_type=_video_media_type(video_path),
+        headers={
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(video_path.stat().st_size),
+            "Cache-Control": "no-store",
+        },
+    )
 
 @app.get("/api/keyframes/{filename}")
 def serve_keyframe_image(filename: str):

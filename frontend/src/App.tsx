@@ -65,7 +65,11 @@ function formatMetricValue(value: unknown) {
 
 function formatSpeakerLabel(seg: any) {
   const label = seg?.speaker || seg?.speaker_id || 'unknown';
-  return label === 'unknown' ? 'unknown' : String(label).replace(/^SPEAKER_/, 'SPK ');
+  if (label === 'unknown') {
+    const role = formatSpeakerRole(seg);
+    return role === 'participant' ? 'unlabeled' : `${role} cue`;
+  }
+  return String(label).replace(/^SPEAKER_/, 'SPK ');
 }
 
 function formatSpeakerRole(seg: any) {
@@ -299,6 +303,7 @@ export default function App() {
   const [playbackTime, setPlaybackTime] = useState(0);
   const [activeTranscriptIndex, setActiveTranscriptIndex] = useState<number | null>(null);
   const [pendingSeekTime, setPendingSeekTime] = useState<number | null>(null);
+  const [videoLoadError, setVideoLoadError] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
 
@@ -700,12 +705,18 @@ export default function App() {
   };
 
   const handleSeekVideo = (seconds: number) => {
+    if (typeof seconds !== 'number' || Number.isNaN(seconds)) return;
     setActiveTab('playback');
-    setPendingSeekTime(seconds);
-    setPlaybackTime(seconds);
-    const nextIndex = findActiveTranscriptIndex(seconds);
+    const seekTime = Math.max(0, seconds);
+    setPendingSeekTime(seekTime);
+    setPlaybackTime(seekTime);
+    const nextIndex = findActiveTranscriptIndex(seekTime);
     setActiveTranscriptIndex(nextIndex >= 0 ? nextIndex : null);
   };
+
+  const activeVideoSrc = systemStatus.active_video_name
+    ? `${API_BASE}/video?v=${encodeURIComponent(systemStatus.active_video_name)}`
+    : `${API_BASE}/video`;
 
   useEffect(() => {
     if (activeTab !== 'playback' || pendingSeekTime === null || !videoRef.current) return;
@@ -1346,13 +1357,22 @@ export default function App() {
                 <div className="video-container">
                   <div className="glass-panel" style={{ padding: '0.5rem', borderRadius: '12px' }}>
                     <video 
+                      key={activeVideoSrc}
                       ref={videoRef} 
-                      src={`${API_BASE}/video`} 
+                      src={activeVideoSrc} 
                       controls 
+                      preload="metadata"
                       className="html5-player"
+                      onLoadedMetadata={() => setVideoLoadError(null)}
+                      onError={() => setVideoLoadError('Video playback is not available. The backend may be down or the local video file is missing.')}
                       onTimeUpdate={handleVideoTimeUpdate}
                       onSeeked={handleVideoTimeUpdate}
                     />
+                    {videoLoadError && (
+                      <div className="media-error-panel">
+                        {videoLoadError}
+                      </div>
+                    )}
                   </div>
                   <div className="input-group" style={{ marginTop: '0.5rem' }}>
                     <div style={{ position: 'relative' }}>

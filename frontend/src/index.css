@@ -757,6 +757,16 @@ h1, h2, h3, h4, h5, h6 {
   outline: none;
 }
 
+.media-error-panel {
+  border: 1px solid rgba(255, 77, 77, 0.35);
+  border-radius: 10px;
+  background: rgba(255, 77, 77, 0.08);
+  color: #ff9a9a;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.7rem 0.85rem;
+}
+
 .search-transcript-input {
   width: 100%;
   background: rgba(0,0,0,0.3);

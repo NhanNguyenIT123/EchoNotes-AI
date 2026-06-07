@@ -31,6 +31,29 @@ def infer_speaker_roles(segments: List[Dict[str, Any]]) -> Dict[str, Any]:
         speakers[speaker]["role_votes"][role] = speakers[speaker]["role_votes"].get(role, 0) + 1
         labeled.append({**seg, "speaker": speaker, "speaker_role": role})
 
+    if set(speakers.keys()) == {"unknown"} and labeled:
+        labeled = [
+            {
+                **seg,
+                "speaker": f"{str(seg.get('speaker_role') or 'participant').upper()}_CUE",
+                "speaker_source": "role_cue_fallback",
+            }
+            for seg in labeled
+        ]
+        speakers = {}
+        for seg in labeled:
+            speaker = seg["speaker"]
+            text = (seg.get("text") or "").strip()
+            role = seg.get("speaker_role") or "participant"
+            duration = max(0.0, float(seg.get("end", 0) or 0) - float(seg.get("start", 0) or 0))
+            speakers.setdefault(speaker, {"segments": 0, "role_votes": {}, "duration": 0.0, "words": 0, "texts": []})
+            speakers[speaker]["segments"] += 1
+            speakers[speaker]["duration"] += duration
+            speakers[speaker]["words"] += len(text.split())
+            if text:
+                speakers[speaker]["texts"].append(text)
+            speakers[speaker]["role_votes"][role] = speakers[speaker]["role_votes"].get(role, 0) + 1
+
     summary = []
     ranked_by_duration = sorted(speakers.items(), key=lambda item: item[1]["duration"], reverse=True)
     lead_speaker = ranked_by_duration[0][0] if ranked_by_duration else None
@@ -186,6 +209,12 @@ def _role_from_text(text: str, idx: int) -> str:
 
 
 def _aggregate_role_for_speaker(speaker: str, info: Dict[str, Any], is_lead_speaker: bool) -> str:
+    if speaker == "INSTRUCTOR_CUE":
+        return "instructor"
+    if speaker == "STUDENT_CUE":
+        return "student"
+    if speaker == "PARTICIPANT_CUE":
+        return "participant"
     if speaker == "unknown":
         return max(info["role_votes"].items(), key=lambda item: item[1])[0] if info["role_votes"] else "participant"
 
