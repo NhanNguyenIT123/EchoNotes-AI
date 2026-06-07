@@ -178,7 +178,8 @@ function SimpleMarkdown({ markdown }: { markdown: string }) {
     }
 
     // Markdown Image check. Supports backend-served keyframe URLs and data URIs.
-    const imgRegex = /^!\[([^\]]*)\]\((.+)\)$/;
+    // Handles trailing spaces or Windows carriage returns (\r) robustly.
+    const imgRegex = /^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/;
     const imgMatch = line.match(imgRegex);
     if (imgMatch) {
       const imageSrc = imgMatch[2].trim();
