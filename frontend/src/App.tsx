@@ -6,7 +6,7 @@ import {
   PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2, ChevronDown
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:8000/api';
+const API_BASE = 'http://127.0.0.1:8000/api';
 type Citation = { label: string; source?: string; title?: string; timestamp?: string; start?: number | null; snippet?: string };
 type ChatItem = { role: 'user' | 'assistant'; content: string; citations?: Citation[]; engine?: string; message_id?: string; latency_ms?: number; mode?: string };
 
@@ -1423,8 +1423,12 @@ export default function App() {
                                 {formatSecs(seg.start)}
                               </div>
                               <div className="row-speaker">
-                                <span className={`speaker-chip ${speakerRole}`}>{speakerLabel}</span>
-                                <span className="speaker-role">{speakerRole}</span>
+                                {!(seg.speaker_source === 'role_cue_fallback' || String(seg.speaker || '').endsWith('_CUE')) && (
+                                  <>
+                                    <span className={`speaker-chip ${speakerRole}`}>{speakerLabel}</span>
+                                    <span className="speaker-role">{speakerRole}</span>
+                                  </>
+                                )}
                               </div>
                               <div className="row-text">
                                 {seg.text}
