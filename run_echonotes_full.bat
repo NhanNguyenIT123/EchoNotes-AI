@@ -3,6 +3,9 @@ setlocal
 
 cd /d "%~dp0"
 
+set ECHONOTES_DATABASE_FALLBACK=sqlite
+set ECHONOTES_VECTOR_BACKEND=auto
+
 echo ============================================================
 echo EchoNotes AI - Premium Multimodal Workstation Launcher
 echo ============================================================
@@ -45,6 +48,10 @@ echo [*] Syncing backend dependencies...
 if errorlevel 1 (
     echo [WARNING] Failed to sync Python dependencies automatically. 
     echo Please run: venv\Scripts\pip.exe install -r requirements.txt manually.
+)
+if /i "%ECHONOTES_INSTALL_PROD_DEPS%"=="1" (
+    echo [*] Installing optional production dependencies...
+    "venv\Scripts\pip.exe" install -r requirements-prod.txt
 )
 
 :: 3. Verify node modules in frontend

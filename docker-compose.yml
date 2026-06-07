@@ -38,7 +38,7 @@ services:
       ECHONOTES_JOB_BACKEND: redis
       ECHONOTES_RQ_QUEUE: echonotes
       ECHONOTES_STORAGE_PROVIDER: local
-      ECHONOTES_VECTOR_BACKEND: local
+      ECHONOTES_VECTOR_BACKEND: auto
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,7 +63,7 @@ services:
       ECHONOTES_JOB_BACKEND: redis
       ECHONOTES_RQ_QUEUE: echonotes
       ECHONOTES_STORAGE_PROVIDER: local
-      ECHONOTES_VECTOR_BACKEND: local
+      ECHONOTES_VECTOR_BACKEND: auto
     depends_on:
       postgres:
         condition: service_healthy

@@ -30,6 +30,30 @@ def _confidence(text: str, aligned_text: str, source: str) -> float:
     return round(max(0.0, min(1.0, density * 0.72 + alignment * 0.28 - penalty)), 3)
 
 
+def _specificity(text: str) -> float:
+    tokens = _tokens(text)
+    if not tokens:
+        return 0.0
+    technical_markers = {
+        "table", "field", "relation", "order", "purchase", "sales", "invoice",
+        "request", "vendor", "customer", "workflow", "code", "line", "header",
+        "business", "central", "approval", "supplier", "quote", "operation",
+    }
+    marker_score = min(1.0, len(tokens & technical_markers) / 5)
+    length_score = min(1.0, len(tokens) / 45)
+    return round(0.55 * length_score + 0.45 * marker_score, 3)
+
+
+def _confidence_label(score: float) -> str:
+    if score >= 0.78:
+        return "strong"
+    if score >= 0.5:
+        return "usable"
+    if score > 0:
+        return "weak"
+    return "missing"
+
+
 def build_vlm_benchmark(slides: List[Dict[str, Any]], transcript: List[Dict[str, Any]]) -> Dict[str, Any]:
     rows = []
     for idx, slide in enumerate(slides or [], start=1):
@@ -48,7 +72,9 @@ def build_vlm_benchmark(slides: List[Dict[str, Any]], transcript: List[Dict[str,
         vlm = slide.get("vlm_description") or ""
         ocr_conf = _confidence(ocr, aligned, "ocr") if ocr else 0.0
         vlm_conf = _confidence(vlm, aligned, "vlm") if vlm else 0.0
-        fused_conf = round(min(1.0, max(ocr_conf, vlm_conf) + 0.12 * min(ocr_conf, vlm_conf)), 3)
+        visual_specificity = max(_specificity(ocr), _specificity(vlm))
+        transcript_alignment = round(max(_overlap(ocr, aligned), _overlap(vlm, aligned)), 3)
+        fused_conf = round(min(1.0, max(ocr_conf, vlm_conf) * 0.72 + visual_specificity * 0.16 + transcript_alignment * 0.12), 3)
         rows.append(
             {
                 "index": idx,
@@ -59,17 +85,32 @@ def build_vlm_benchmark(slides: List[Dict[str, Any]], transcript: List[Dict[str,
                 "ocr_confidence": ocr_conf,
                 "vlm_confidence": vlm_conf,
                 "ocr_vlm_confidence": fused_conf,
-                "alignment_score": round(max(_overlap(ocr, aligned), _overlap(vlm, aligned)), 3),
+                "confidence_level": _confidence_label(fused_conf),
+                "alignment_score": transcript_alignment,
+                "rubric": {
+                    "coverage": round((1 if ocr.strip() else 0) * 0.35 + (1 if vlm.strip() else 0) * 0.65, 3),
+                    "specificity": visual_specificity,
+                    "transcript_alignment": transcript_alignment,
+                    "score": fused_conf,
+                },
+                "review_note": (
+                    "Visual context is grounded enough for report synthesis."
+                    if fused_conf >= 0.5
+                    else "Needs OCR/VLM rerun or manual review before treating as strong visual evidence."
+                ),
             }
         )
     count = max(1, len(rows))
     return {
+        "benchmark_engine": "deterministic visual-grounding rubric over OCR, image-understanding text, and aligned transcript",
         "slides_evaluated": len(rows),
         "ocr_coverage": round(sum(1 for row in rows if row["has_ocr"]) / count, 3),
         "vlm_coverage": round(sum(1 for row in rows if row["has_vlm"]) / count, 3),
         "avg_ocr_confidence": round(sum(row["ocr_confidence"] for row in rows) / count, 3),
         "avg_vlm_confidence": round(sum(row["vlm_confidence"] for row in rows) / count, 3),
         "avg_ocr_vlm_confidence": round(sum(row["ocr_vlm_confidence"] for row in rows) / count, 3),
+        "strong_visual_evidence": sum(1 for row in rows if row["confidence_level"] == "strong"),
+        "usable_visual_evidence": sum(1 for row in rows if row["confidence_level"] in {"strong", "usable"}),
         "rows": rows,
     }
 

@@ -45,18 +45,66 @@ def segments_to_text(segments: List[Dict[str, Any]]) -> str:
     return " ".join((seg.get("text") or "").strip() for seg in segments or [] if (seg.get("text") or "").strip())
 
 
+def _quality_grade(score: float | None) -> str:
+    if score is None:
+        return "unavailable"
+    if score <= 0.15:
+        return "excellent"
+    if score <= 0.35:
+        return "usable"
+    if score <= 0.6:
+        return "needs review"
+    return "poor"
+
+
+def _nearest_segment(target_start: float, segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    if not segments:
+        return {}
+    return min(segments, key=lambda seg: abs(float(seg.get("start", 0) or 0) - target_start))
+
+
+def transcript_comparison_samples(
+    reference_segments: List[Dict[str, Any]],
+    hypothesis_segments: List[Dict[str, Any]],
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    if not reference_segments or not hypothesis_segments:
+        return []
+    step = max(1, len(reference_segments) // limit)
+    samples = []
+    for ref in reference_segments[::step][:limit]:
+        start = float(ref.get("start", 0) or 0)
+        hyp = _nearest_segment(start, hypothesis_segments)
+        ref_text = (ref.get("text") or "").strip()
+        hyp_text = (hyp.get("text") or "").strip()
+        samples.append(
+            {
+                "start": start,
+                "reference": ref_text,
+                "hypothesis": hyp_text,
+                "wer": round(wer(ref_text, hyp_text), 4) if ref_text and hyp_text else None,
+                "cer": round(cer(ref_text, hyp_text), 4) if ref_text and hyp_text else None,
+            }
+        )
+    return samples
+
+
 def evaluate_transcript_quality(
     reference_segments: List[Dict[str, Any]],
     hypothesis_segments: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     reference_text = segments_to_text(reference_segments)
     hypothesis_text = segments_to_text(hypothesis_segments)
+    wer_score = round(wer(reference_text, hypothesis_text), 4) if reference_text and hypothesis_text else None
+    cer_score = round(cer(reference_text, hypothesis_text), 4) if reference_text and hypothesis_text else None
     return {
         "available": bool(reference_text and hypothesis_text),
-        "wer": round(wer(reference_text, hypothesis_text), 4) if reference_text and hypothesis_text else None,
-        "cer": round(cer(reference_text, hypothesis_text), 4) if reference_text and hypothesis_text else None,
+        "wer": wer_score,
+        "cer": cer_score,
+        "grade": _quality_grade(wer_score),
         "reference_words": len(normalize_text(reference_text).split()),
         "hypothesis_words": len(normalize_text(hypothesis_text).split()),
         "reference_segments": len(reference_segments or []),
         "hypothesis_segments": len(hypothesis_segments or []),
+        "samples": transcript_comparison_samples(reference_segments, hypothesis_segments),
     }

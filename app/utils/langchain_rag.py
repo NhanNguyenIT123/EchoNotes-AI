@@ -78,41 +78,49 @@ def _dedupe_documents(docs: List[Any], limit: int = 10) -> List[Any]:
 
 
 def _external_vector_retrieve(query: str, docs: List[Any], k: int = 10) -> tuple[List[Any], str]:
-    backend = os.getenv("ECHONOTES_VECTOR_BACKEND", "local").strip().lower()
+    backend = os.getenv("ECHONOTES_VECTOR_BACKEND", "auto").strip().lower()
     if backend in {"", "local", "tfidf"}:
         return [], "local-tfidf"
 
-    try:
-        from langchain_ollama import OllamaEmbeddings
+    candidates = ["chroma", "faiss"] if backend == "auto" else [backend]
+    errors = []
+    for candidate in candidates:
+        try:
+            from langchain_ollama import OllamaEmbeddings
 
-        embed_model = os.getenv("ECHONOTES_EMBED_MODEL", "nomic-embed-text")
-        embeddings = OllamaEmbeddings(model=embed_model, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+            embed_model = os.getenv("ECHONOTES_EMBED_MODEL", "nomic-embed-text")
+            embeddings = OllamaEmbeddings(model=embed_model, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
 
-        if backend == "chroma":
-            try:
-                from langchain_chroma import Chroma  # type: ignore
-            except Exception:
-                from langchain_community.vectorstores import Chroma  # type: ignore
+            if candidate == "chroma":
+                try:
+                    from langchain_chroma import Chroma  # type: ignore
+                except Exception:
+                    from langchain_community.vectorstores import Chroma  # type: ignore
 
-            persist_dir = os.getenv("ECHONOTES_CHROMA_DIR", "data/vectorstores/chroma")
-            collection = os.getenv("ECHONOTES_CHROMA_COLLECTION", "echonotes_active")
-            store = Chroma.from_documents(
-                docs,
-                embeddings,
-                collection_name=collection,
-                persist_directory=persist_dir,
-            )
-            return store.similarity_search(query, k=k), f"chroma:{embed_model}"
+                persist_dir = os.getenv("ECHONOTES_CHROMA_DIR", "data/vectorstores/chroma")
+                collection = os.getenv("ECHONOTES_CHROMA_COLLECTION", "echonotes_active")
+                store = Chroma.from_documents(
+                    docs,
+                    embeddings,
+                    collection_name=collection,
+                    persist_directory=persist_dir,
+                )
+                return store.similarity_search(query, k=k), f"chroma:{embed_model}"
 
-        if backend == "faiss":
-            from langchain_community.vectorstores import FAISS  # type: ignore
+            if candidate == "faiss":
+                from langchain_community.vectorstores import FAISS  # type: ignore
 
-            store = FAISS.from_documents(docs, embeddings)
-            return store.similarity_search(query, k=k), f"faiss:{embed_model}"
+                store = FAISS.from_documents(docs, embeddings)
+                return store.similarity_search(query, k=k), f"faiss:{embed_model}"
 
-        return [], f"unsupported-vector-backend:{backend}"
-    except Exception as exc:
-        return [], f"{backend}-unavailable:{exc}"
+            errors.append(f"unsupported-vector-backend:{candidate}")
+        except Exception as exc:
+            errors.append(f"{candidate}:{exc}")
+
+    if backend == "auto":
+        reason = "; ".join(errors[:2])
+        return [], f"local-tfidf(auto fallback: {reason})"
+    return [], f"{backend}-unavailable:{'; '.join(errors)}"
 
 
 def _build_documents(

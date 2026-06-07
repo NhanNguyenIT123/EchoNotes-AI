@@ -12,9 +12,13 @@ from sqlalchemy import DateTime, String, Text, create_engine, inspect, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
+from app.config import DATA_DIR
+
 
 DEFAULT_DATABASE_URL = "postgresql+psycopg://echonotes:echonotes@127.0.0.1:5432/echonotes"
 DATABASE_URL = os.getenv("ECHONOTES_DATABASE_URL", DEFAULT_DATABASE_URL)
+ACTIVE_DATABASE_URL = DATABASE_URL
+DATABASE_FALLBACK_REASON: Optional[str] = None
 
 
 class Base(DeclarativeBase):
@@ -71,11 +75,18 @@ class EvaluationRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
-engine_kwargs: Dict[str, Any] = {"pool_pre_ping": True, "future": True}
-if DATABASE_URL.startswith("postgresql"):
-    engine_kwargs["connect_args"] = {"connect_timeout": 2}
+def _engine_kwargs(database_url: str) -> Dict[str, Any]:
+    kwargs: Dict[str, Any] = {"pool_pre_ping": True, "future": True}
+    if database_url.startswith("postgresql"):
+        kwargs["connect_args"] = {"connect_timeout": 2}
+    return kwargs
 
-engine = create_engine(DATABASE_URL, **engine_kwargs)
+
+def _create_database_engine(database_url: str):
+    return create_engine(database_url, **_engine_kwargs(database_url))
+
+
+engine = _create_database_engine(ACTIVE_DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, future=True)
 
 
@@ -92,9 +103,31 @@ def _json_load(value: Optional[str], default: Any) -> Any:
         return default
 
 
+def _sqlite_fallback_url() -> str:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{(DATA_DIR / 'echonotes_fallback.db').as_posix()}"
+
+
+def _switch_to_sqlite_fallback(reason: Exception) -> None:
+    global ACTIVE_DATABASE_URL, DATABASE_FALLBACK_REASON, engine, SessionLocal
+    ACTIVE_DATABASE_URL = _sqlite_fallback_url()
+    DATABASE_FALLBACK_REASON = str(reason)
+    engine = _create_database_engine(ACTIVE_DATABASE_URL)
+    SessionLocal.configure(bind=engine)
+
+
 def init_db() -> None:
-    Base.metadata.create_all(bind=engine)
-    _ensure_schema_columns()
+    try:
+        Base.metadata.create_all(bind=engine)
+        _ensure_schema_columns()
+    except Exception as exc:
+        allow_fallback = os.getenv("ECHONOTES_DATABASE_FALLBACK", "sqlite").strip().lower()
+        if DATABASE_URL.startswith("postgresql") and allow_fallback in {"1", "true", "yes", "sqlite", "local"}:
+            _switch_to_sqlite_fallback(exc)
+            Base.metadata.create_all(bind=engine)
+            _ensure_schema_columns()
+            return
+        raise
 
 
 def _ensure_schema_columns() -> None:
@@ -130,9 +163,13 @@ def db_health() -> Dict[str, Any]:
     try:
         with engine.connect() as conn:
             conn.exec_driver_sql("select 1")
-        return {"connected": True, "url": _redact_url(DATABASE_URL)}
+        provider = "sqlite-fallback" if ACTIVE_DATABASE_URL.startswith("sqlite") else "postgresql"
+        payload = {"connected": True, "url": _redact_url(ACTIVE_DATABASE_URL), "provider": provider}
+        if DATABASE_FALLBACK_REASON:
+            payload["fallback_reason"] = DATABASE_FALLBACK_REASON
+        return payload
     except SQLAlchemyError as exc:
-        return {"connected": False, "url": _redact_url(DATABASE_URL), "error": str(exc)}
+        return {"connected": False, "url": _redact_url(ACTIVE_DATABASE_URL), "error": str(exc)}
 
 
 def _redact_url(url: str) -> str:

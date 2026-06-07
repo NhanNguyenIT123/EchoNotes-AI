@@ -246,7 +246,7 @@ export default function App() {
     dataset_status: 'idle',
     dataset_progress: 0,
     active_project_id: null as string | null,
-    database: { connected: false, error: null as string | null }
+    database: { connected: false, error: null as string | null, provider: '' as string, fallback_reason: null as string | null }
   });
 
   // Multimodal outputs
@@ -523,7 +523,7 @@ export default function App() {
     try {
       await axios.post(`${API_BASE}/projects/save-current`);
       fetchProjects();
-      alert('Current lecture project saved to PostgreSQL.');
+      alert('Current lecture project saved to the active project database.');
     } catch (err: any) {
       alert(`Save project failed: ${err.response?.data?.detail || err.message}`);
     }
@@ -569,6 +569,16 @@ export default function App() {
       alert(`Storage sync completed with ${count} artifacts using provider: ${res.data.provider}`);
     } catch (err: any) {
       alert(`Storage sync failed: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleBuildRegressionSet = async () => {
+    try {
+      const res = await axios.post(`${API_BASE}/evaluation/regression-set/build`);
+      await fetchEvaluationSummary();
+      alert(`Regression set saved with ${res.data.regression_set?.cases || 0} cases.`);
+    } catch (err: any) {
+      alert(`Regression set build failed: ${err.response?.data?.detail || err.message}`);
     }
   };
 
@@ -735,6 +745,10 @@ export default function App() {
   };
 
   const selectedChatMode = CHAT_MODE_OPTIONS.find(option => option.value === chatMode) || CHAT_MODE_OPTIONS[0];
+  const databaseProvider = systemStatus.database?.provider || '';
+  const databaseLabel = systemStatus.database?.connected
+    ? (databaseProvider === 'sqlite-fallback' ? 'Local DB fallback' : 'PostgreSQL online')
+    : 'Database offline';
 
   return (
     <div className={`app-container ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${focusMode ? 'focus-mode' : ''}`}>
@@ -756,7 +770,7 @@ export default function App() {
               color: systemStatus.database?.connected ? 'var(--green-complete)' : 'var(--red-accent)',
               fontWeight: 700
             }}>
-              {systemStatus.database?.connected ? 'PostgreSQL online' : 'Database offline'}
+              {databaseLabel}
             </span>
           </div>
 
@@ -1570,12 +1584,24 @@ export default function App() {
                 <div className="glass-panel eval-card">
                   <h3>Transcript Quality</h3>
                   {evaluationSummary?.transcript_quality?.available ? (
-                    <div className="metric-grid">
-                      <div className="metric-tile"><span>WER</span><strong>{evaluationSummary.transcript_quality.wer}</strong></div>
-                      <div className="metric-tile"><span>CER</span><strong>{evaluationSummary.transcript_quality.cer}</strong></div>
-                      <div className="metric-tile"><span>Reference words</span><strong>{evaluationSummary.transcript_quality.reference_words}</strong></div>
-                      <div className="metric-tile"><span>Hypothesis words</span><strong>{evaluationSummary.transcript_quality.hypothesis_words}</strong></div>
-                    </div>
+                    <>
+                      <div className="metric-grid">
+                        <div className="metric-tile"><span>WER</span><strong>{evaluationSummary.transcript_quality.wer}</strong></div>
+                        <div className="metric-tile"><span>CER</span><strong>{evaluationSummary.transcript_quality.cer}</strong></div>
+                        <div className="metric-tile"><span>Quality grade</span><strong>{evaluationSummary.transcript_quality.grade}</strong></div>
+                        <div className="metric-tile"><span>Reference words</span><strong>{evaluationSummary.transcript_quality.reference_words}</strong></div>
+                        <div className="metric-tile"><span>Hypothesis words</span><strong>{evaluationSummary.transcript_quality.hypothesis_words}</strong></div>
+                      </div>
+                      <div className="speaker-list" style={{ marginTop: '0.75rem' }}>
+                        {(evaluationSummary.transcript_quality.samples || []).slice(0, 4).map((sample: any, idx: number) => (
+                          <div className="speaker-row" key={idx}>
+                            <span>{formatSecs(sample.start)}</span>
+                            <strong>WER {sample.wer ?? 'n/a'}</strong>
+                            <em>{sample.reference || sample.hypothesis || 'empty sample'}</em>
+                          </div>
+                        ))}
+                      </div>
+                    </>
                   ) : (
                     <p className="eval-muted">{evaluationSummary?.transcript_quality?.reason || 'Upload Teams transcript to compute WER/CER.'}</p>
                   )}
@@ -1583,11 +1609,14 @@ export default function App() {
 
                 <div className="glass-panel eval-card">
                   <h3>Visual Understanding Check</h3>
+                  <p className="eval-muted">{evaluationSummary?.vlm_benchmark?.benchmark_engine || 'Run visual analysis to build a visual-grounding rubric.'}</p>
                   <div className="metric-grid">
                     <div className="metric-tile"><span>Slides evaluated</span><strong>{evaluationSummary?.vlm_benchmark?.slides_evaluated ?? 0}</strong></div>
                     <div className="metric-tile"><span>OCR coverage</span><strong>{evaluationSummary?.vlm_benchmark?.ocr_coverage ?? 0}</strong></div>
                     <div className="metric-tile"><span>Image analysis coverage</span><strong>{evaluationSummary?.vlm_benchmark?.vlm_coverage ?? 0}</strong></div>
                     <div className="metric-tile"><span>Fused visual confidence</span><strong>{evaluationSummary?.vlm_benchmark?.avg_ocr_vlm_confidence ?? 0}</strong></div>
+                    <div className="metric-tile"><span>Strong evidence</span><strong>{evaluationSummary?.vlm_benchmark?.strong_visual_evidence ?? 0}</strong></div>
+                    <div className="metric-tile"><span>Usable evidence</span><strong>{evaluationSummary?.vlm_benchmark?.usable_visual_evidence ?? 0}</strong></div>
                   </div>
                 </div>
 
@@ -1626,11 +1655,16 @@ export default function App() {
                     <button className="btn-secondary" onClick={handleSyncStorage}>Sync Artifacts</button>
                     <button className="btn-secondary" onClick={() => downloadFromEndpoint('/export/quiz')}>Download Quiz JSON</button>
                     <button className="btn-secondary" onClick={() => downloadFromEndpoint('/export/anki')}>Download Anki TSV</button>
+                    <button className="btn-secondary" onClick={handleBuildRegressionSet}>Build Regression Set</button>
                     <button className="btn-secondary" onClick={() => window.open(`${API_BASE}/evaluation/regression-set`, '_blank')}>Regression Set JSON</button>
                     <button className="btn-secondary" onClick={() => window.open(`${API_BASE}/deployment/readiness`, '_blank')}>Cloud/Worker Readiness JSON</button>
                   </div>
                   <p className="eval-muted">
-                    Regression set: {evaluationSummary?.regression_set?.available ? `${evaluationSummary.regression_set.cases} cases` : 'not available'}
+                    Regression set: {evaluationSummary?.regression_set?.available
+                      ? `${evaluationSummary.regression_set.cases} cases`
+                      : evaluationSummary?.regression_set?.buildable_from_current_lecture
+                        ? `not built yet (${evaluationSummary.regression_set.candidate_cases} candidate cases)`
+                        : 'not available'}
                   </p>
                 </div>
               </div>

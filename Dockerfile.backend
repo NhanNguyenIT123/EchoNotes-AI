@@ -4,8 +4,10 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt requirements-prod.txt ./
+ARG INSTALL_PROD_DEPS=true
+RUN pip install --no-cache-dir -r requirements.txt && \
+    if [ "$INSTALL_PROD_DEPS" = "true" ]; then pip install --no-cache-dir -r requirements-prod.txt; fi
 
 COPY app ./app
 COPY backend ./backend

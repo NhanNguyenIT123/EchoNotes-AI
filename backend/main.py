@@ -7,6 +7,7 @@ import shutil
 import threading
 import subprocess
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Generator
 
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException, Query
@@ -1090,19 +1091,8 @@ def run_chat(req: ChatRequest):
 
 @app.get("/api/evaluation/summary")
 def get_evaluation_summary():
-    transcript = []
-    slides = []
-    topic_blocks = []
+    transcript, slides, topic_blocks = load_current_evaluation_artifacts()
     reference_segments = []
-    if enriched_cache_path.exists():
-        with open(enriched_cache_path, "r", encoding="utf-8") as f:
-            transcript = json.load(f)
-    if slides_cache_path.exists():
-        with open(slides_cache_path, "r", encoding="utf-8") as f:
-            slides = json.load(f)
-    if topic_blocks_cache_path.exists():
-        with open(topic_blocks_cache_path, "r", encoding="utf-8") as f:
-            topic_blocks = json.load(f)
     if state.get("active_transcript_path") and Path(state["active_transcript_path"]).exists():
         try:
             reference_segments = parse_teams_transcript(Path(state["active_transcript_path"]))
@@ -1131,12 +1121,23 @@ def get_evaluation_summary():
     vlm_benchmark = build_vlm_benchmark(slides, transcript)
     ablation = build_ablation_snapshot(transcript, slides, topic_blocks, vlm_benchmark, transcript_quality)
     regression_set = load_regression_set_summary()
+    if not regression_set.get("available"):
+        regression_set["buildable_from_current_lecture"] = bool(topic_blocks)
+        regression_set["candidate_cases"] = min(12, len(topic_blocks or []))
+    chat_messages = list_chat_messages(state.get("active_project_id"), limit=200) if state.get("active_project_id") else []
+    chat_latencies = [
+        int(message["latency_ms"])
+        for message in chat_messages
+        if message.get("role") == "assistant" and isinstance(message.get("latency_ms"), int)
+    ]
     metrics = {
         **(state.get("last_metrics") or {}),
         "transcript_segments": len(transcript),
         "topic_blocks": len(topic_blocks),
         "keyframes": len(slides),
         "pdf_ingested": pdf_text_cache_path.exists(),
+        "chat_messages": len(chat_messages),
+        "rag_answer_latency_avg_ms": round(sum(chat_latencies) / len(chat_latencies), 1) if chat_latencies else None,
         "evaluations_stored": len(list_evaluation_records(state.get("active_project_id"), limit=20)) if state.get("active_project_id") else 0,
     }
     return {
@@ -1210,6 +1211,82 @@ def load_regression_set_summary() -> Dict[str, Any]:
     }
 
 
+def load_current_evaluation_artifacts() -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    transcript: List[Dict[str, Any]] = []
+    slides: List[Dict[str, Any]] = []
+    topic_blocks: List[Dict[str, Any]] = []
+    if enriched_cache_path.exists():
+        transcript = json.loads(enriched_cache_path.read_text(encoding="utf-8"))
+    if slides_cache_path.exists():
+        slides = json.loads(slides_cache_path.read_text(encoding="utf-8"))
+    if topic_blocks_cache_path.exists():
+        topic_blocks = json.loads(topic_blocks_cache_path.read_text(encoding="utf-8"))
+    return transcript, slides, topic_blocks
+
+
+def build_regression_set_payload(
+    transcript: List[Dict[str, Any]],
+    slides: List[Dict[str, Any]],
+    topic_blocks: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    cases = []
+    for block in (topic_blocks or [])[:12]:
+        start = float(block.get("start", 0) or 0)
+        end = float(block.get("end", start + 90) or start + 90)
+        block_text = block.get("text") or ""
+        keywords = block.get("keywords") or extract_keywords_simple(block_text, limit=8)
+        aligned_slides = [
+            {
+                "timestamp": slide.get("timestamp_formatted"),
+                "timestamp_sec": slide.get("timestamp_sec"),
+                "has_ocr": bool((slide.get("ocr_text") or "").strip()),
+                "has_image_understanding": bool((slide.get("vlm_description") or "").strip()),
+            }
+            for slide in slides or []
+            if start <= float(slide.get("timestamp_sec", 0) or 0) <= end
+        ][:5]
+        cases.append(
+            {
+                "id": f"topic-{block.get('index', len(cases) + 1)}",
+                "title": block.get("title") or f"Topic {len(cases) + 1}",
+                "time_range": {
+                    "start": start,
+                    "end": end,
+                    "label": f"{block.get('timestamp')} - {block.get('end_timestamp')}",
+                },
+                "expected_topics": [block.get("title") or "lecture topic"],
+                "expected_terms": keywords[:8],
+                "retrieval_queries": [
+                    f"Explain {keywords[0]}" if keywords else f"Explain {block.get('title', 'this topic')}",
+                    f"Find exact moment about {keywords[0]}" if keywords else f"Find exact moment for {block.get('title', 'this topic')}",
+                    f"Generate quiz for {block.get('title', 'this topic')}",
+                ],
+                "visual_expectations": aligned_slides,
+                "reference_excerpt": block_text[:900],
+                "acceptance": {
+                    "must_return_timestamp": True,
+                    "must_include_at_least_one_expected_term": True,
+                    "must_stay_grounded": True,
+                },
+            }
+        )
+
+    return {
+        "name": "EchoNotes active lecture regression set",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "active_project_id": state.get("active_project_id"),
+        "active_video_name": state.get("active_video_name"),
+        "source": "generated_from_current_lecture",
+        "coverage": {
+            "transcript_segments": len(transcript or []),
+            "topic_blocks": len(topic_blocks or []),
+            "visual_keyframes": len(slides or []),
+            "cases": len(cases),
+        },
+        "cases": cases,
+    }
+
+
 class ChatFeedbackRequest(BaseModel):
     message_id: Optional[str] = None
     rating: str
@@ -1257,10 +1334,23 @@ def get_regression_set():
     return FileResponse(str(regression_set_path), media_type="application/json", filename=regression_set_path.name)
 
 
+@app.post("/api/evaluation/regression-set/build")
+def build_regression_set_from_current():
+    transcript, slides, topic_blocks = load_current_evaluation_artifacts()
+    if not topic_blocks:
+        raise HTTPException(status_code=400, detail="Run analysis first to create semantic topic blocks.")
+    regression_set_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_regression_set_payload(transcript, slides, topic_blocks)
+    regression_set_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    record_id = add_evaluation_record(state.get("active_project_id"), "regression_set", payload)
+    summary = load_regression_set_summary()
+    return {"status": "saved", "evaluation_id": record_id, "regression_set": summary}
+
+
 @app.get("/api/deployment/readiness")
 def deployment_readiness():
     storage_provider = os.getenv("ECHONOTES_STORAGE_PROVIDER", "local").lower()
-    vector_backend = os.getenv("ECHONOTES_VECTOR_BACKEND", "local").lower()
+    vector_backend = os.getenv("ECHONOTES_VECTOR_BACKEND", "auto").lower()
     job_backend = configured_job_backend()
     return {
         "worker_queue": {
@@ -1275,8 +1365,8 @@ def deployment_readiness():
         },
         "vector_retrieval": {
             "current": vector_backend,
-            "planned": "local TF-IDF, Chroma, or FAISS via LangChain",
-            "ready": vector_backend in {"local", "chroma", "faiss"},
+            "planned": "auto Chroma/FAISS embeddings with local TF-IDF fallback",
+            "ready": vector_backend in {"auto", "local", "tfidf", "chroma", "faiss"},
         },
         "diarization": {
             "current": os.getenv("ECHONOTES_DIARIZATION_PROVIDER", "heuristic"),
