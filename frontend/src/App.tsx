@@ -234,7 +234,7 @@ export default function App() {
   const languagePrompts: Record<string, string> = {
     auto: 'Technical lecture. Preserve the speaker\'s original language. Keep technical terms and code identifiers unchanged. Do not translate.',
     en: 'English technical lecture. Preserve exact English terms, code identifiers, product names, and acronyms. Do not translate.',
-    vi: 'Bài giảng tiếng Việt. Nhận diện và giữ nguyên tiếng Việt; chỉ giữ thuật ngữ tiếng Anh/code identifier nếu người nói dùng. Không dịch sang tiếng Anh.'
+    vi: 'Bài giảng tiếng Việt có thể xen thuật ngữ tiếng Anh. Nhận diện và giữ nguyên tiếng Việt; giữ nguyên thuật ngữ tiếng Anh/code identifier nếu người nói dùng. Không dịch sang tiếng Anh.'
   };
 
   const handleSpokenLanguageChange = (language: string) => {
@@ -990,10 +990,13 @@ export default function App() {
         <div className="input-group">
           <label className="input-label">Spoken Language</label>
           <select className="form-select" value={spokenLanguage} onChange={e => handleSpokenLanguageChange(e.target.value)}>
-            <option value="auto">Auto Detect / preserve original language</option>
-            <option value="vi">Vietnamese (force Vietnamese ASR)</option>
+            <option value="auto">Auto Detect (first-language guess)</option>
+            <option value="vi">Vietnamese + English terms (mixed lecture)</option>
             <option value="en">English (force English ASR)</option>
           </select>
+          <p className="input-help">
+            For Vietnamese lectures with English terms, use Vietnamese + English terms. Auto can lock onto early English and decode later Vietnamese as English.
+          </p>
         </div>
 
         <div className="input-group">

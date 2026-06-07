@@ -223,6 +223,13 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 500;
 }
 
+.input-help {
+  margin: 0.45rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
 .form-select, .form-input, .form-textarea {
   width: 100%;
   background: rgba(0, 0, 0, 0.4);
