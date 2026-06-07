@@ -3,12 +3,40 @@ import axios from 'axios';
 import { 
   Play, Video, FileText, Cpu, Eye, MessageSquare,
   RefreshCw, Upload, Sparkles, Download, FileDown, Search,
-  PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2
+  PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2, ChevronDown
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000/api';
 type Citation = { label: string; source?: string; title?: string; timestamp?: string; start?: number | null; snippet?: string };
 type ChatItem = { role: 'user' | 'assistant'; content: string; citations?: Citation[]; engine?: string; message_id?: string; latency_ms?: number; mode?: string };
+
+const CHAT_MODE_OPTIONS = [
+  {
+    value: 'explain',
+    label: 'Explain concept',
+    description: 'Grounded explanation from transcript, report, and visual context.'
+  },
+  {
+    value: 'find_moment',
+    label: 'Find exact moment',
+    description: 'Return the most relevant timestamps and evidence snippets.'
+  },
+  {
+    value: 'quiz',
+    label: 'Generate quiz',
+    description: 'Create review questions from the current lecture context.'
+  },
+  {
+    value: 'summarize_range',
+    label: 'Summarize range',
+    description: 'Condense the matching time window into concise notes.'
+  },
+  {
+    value: 'compare_visual',
+    label: 'Compare slide vs transcript',
+    description: 'Align slide/keyframe evidence with what was spoken.'
+  }
+];
 
 function formatAblationMode(mode: string) {
   const labels: Record<string, string> = {
@@ -240,11 +268,13 @@ export default function App() {
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
   const [chatMode, setChatMode] = useState('explain');
+  const [chatModeOpen, setChatModeOpen] = useState(false);
   const [evaluationSummary, setEvaluationSummary] = useState<any | null>(null);
 
   // Ref handles
   const videoRef = useRef<HTMLVideoElement>(null);
   const activeTranscriptRef = useRef<HTMLDivElement | null>(null);
+  const chatModeRef = useRef<HTMLDivElement | null>(null);
 
   // Fetch initial Ollama models list & status
   useEffect(() => {
@@ -653,6 +683,16 @@ export default function App() {
     }
   }, [activeTab]);
 
+  useEffect(() => {
+    const closeChatMode = (event: MouseEvent) => {
+      if (chatModeRef.current && !chatModeRef.current.contains(event.target as Node)) {
+        setChatModeOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', closeChatMode);
+    return () => document.removeEventListener('mousedown', closeChatMode);
+  }, []);
+
   // --- CHAT ACTIONS ---
   const handleSendChat = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -693,6 +733,8 @@ export default function App() {
     const rem = s % 60;
     return `${m.toString().padStart(2, '0')}:${rem.toString().padStart(2, '0')}`;
   };
+
+  const selectedChatMode = CHAT_MODE_OPTIONS.find(option => option.value === chatMode) || CHAT_MODE_OPTIONS[0];
 
   return (
     <div className={`app-container ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${focusMode ? 'focus-mode' : ''}`}>
@@ -1451,13 +1493,48 @@ export default function App() {
                 </div>
 
                 <form className="chat-input-panel" onSubmit={handleSendChat}>
-                  <select className="chat-mode-select" value={chatMode} onChange={e => setChatMode(e.target.value)} disabled={chatLoading}>
-                    <option value="explain">Explain concept</option>
-                    <option value="find_moment">Find exact moment</option>
-                    <option value="quiz">Generate quiz</option>
-                    <option value="summarize_range">Summarize range</option>
-                    <option value="compare_visual">Compare slide vs transcript</option>
-                  </select>
+                  <div
+                    className={`chat-mode-picker ${chatModeOpen ? 'open' : ''} ${chatLoading ? 'disabled' : ''}`}
+                    ref={chatModeRef}
+                  >
+                    <button
+                      type="button"
+                      className="chat-mode-trigger"
+                      onClick={() => !chatLoading && setChatModeOpen(open => !open)}
+                      disabled={chatLoading}
+                      aria-haspopup="listbox"
+                      aria-expanded={chatModeOpen}
+                    >
+                      <span className="chat-mode-current">
+                        <span>Query mode</span>
+                        <strong>{selectedChatMode.label}</strong>
+                      </span>
+                      <ChevronDown size={16} />
+                    </button>
+                    {chatModeOpen && (
+                      <div className="chat-mode-menu" role="listbox">
+                        {CHAT_MODE_OPTIONS.map(option => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            className={`chat-mode-option ${chatMode === option.value ? 'selected' : ''}`}
+                            role="option"
+                            aria-selected={chatMode === option.value}
+                            onClick={() => {
+                              setChatMode(option.value);
+                              setChatModeOpen(false);
+                            }}
+                          >
+                            <span className="chat-mode-option-dot" />
+                            <span className="chat-mode-option-copy">
+                              <strong>{option.label}</strong>
+                              <small>{option.description}</small>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <input 
                     type="text" 
                     className="chat-text-input" 
