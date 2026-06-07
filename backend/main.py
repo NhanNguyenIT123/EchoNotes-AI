@@ -155,7 +155,7 @@ def markdown_for_client(markdown_text: str) -> str:
 
         image_path = Path(target)
         if image_path.exists() and image_path.is_file():
-            return f"![{alt_text}](http://localhost:8000/api/keyframes/{image_path.name})"
+            return f"![{alt_text}](http://127.0.0.1:8000/api/keyframes/{image_path.name})"
 
         return ""
 
