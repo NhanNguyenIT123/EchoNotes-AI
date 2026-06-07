@@ -20,6 +20,76 @@ function formatAblationMode(mode: string) {
   return labels[mode] || mode.replace(/_/g, ' ');
 }
 
+function cleanMarkdownText(text: string) {
+  return (text || "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim();
+}
+
+function renderInlineMarkdown(text: string) {
+  const parts = (text || "").split(/(\*\*.*?\*\*|`.*?`)/g).filter(Boolean);
+  return parts.map((part, idx) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={idx}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return <code key={idx}>{part.slice(1, -1)}</code>;
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+}
+
+function parseQuizItems(content: string) {
+  const normalized = (content || "")
+    .replace(/\r/g, "")
+    .replace(/\s+-\s+\*\*Answer Hint:\*\*/g, "\nAnswer Hint:")
+    .replace(/\s+-\s+Answer Hint:/g, "\nAnswer Hint:")
+    .replace(/\s*(\d+)\.\s+\*\*Question:\*\*/g, "\n$1. Question:")
+    .replace(/\s*(\d+)\.\s+Question:/g, "\n$1. Question:")
+    .replace(/\*\*/g, "");
+  const matches = [...normalized.matchAll(/(?:^|\n)\s*(\d+)\.\s*Question:\s*([\s\S]*?)(?=\n\s*\d+\.\s*Question:|$)/g)];
+  return matches.map(match => {
+    const raw = match[2].trim();
+    const [questionPart, answerPart = ""] = raw.split(/\n\s*Answer Hint:\s*/);
+    return {
+      index: Number(match[1]),
+      question: cleanMarkdownText(questionPart),
+      hint: cleanMarkdownText(answerPart),
+    };
+  }).filter(item => item.question);
+}
+
+function ChatMessageContent({ content, mode }: { content: string; mode?: string }) {
+  const looksLikeQuiz = /\bQuestion:\b|\*\*Question:\*\*/i.test(content || "");
+  const quizItems = mode === "quiz" || looksLikeQuiz ? parseQuizItems(content) : [];
+  if (quizItems.length > 0) {
+    return (
+      <div className="quiz-answer-list">
+        <div className="quiz-answer-kicker">Generated Quiz</div>
+        {quizItems.map(item => (
+          <div className="quiz-answer-card" key={item.index}>
+            <div className="quiz-answer-index">{item.index}</div>
+            <div className="quiz-answer-body">
+              <strong>{item.question}</strong>
+              {item.hint && <p>{item.hint}</p>}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="chat-markdown">
+      {(content || "").split(/\n{2,}/).filter(Boolean).map((paragraph, idx) => (
+        <p key={idx}>{renderInlineMarkdown(paragraph.trim())}</p>
+      ))}
+    </div>
+  );
+}
+
 // Simple Markdown Renderer component to avoid third-party HTML/Vite build friction
 function SimpleMarkdown({ markdown }: { markdown: string }) {
   if (!markdown) return <p style={{ color: 'var(--text-muted)' }}>No notes generated yet.</p>;
@@ -1331,7 +1401,7 @@ export default function App() {
                           {msg.role === 'user' ? 'You' : 'EchoNotes Assistant'}
                         </div>
                         <div className="chat-bubble-content">
-                          {msg.content}
+                          <ChatMessageContent content={msg.content} mode={msg.mode} />
                         </div>
                         {msg.role === 'assistant' && (
                           <div className="chat-citation-area">
