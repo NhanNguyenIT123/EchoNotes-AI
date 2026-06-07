@@ -45,9 +45,14 @@ from app.utils.learning_exports import write_anki_tsv, write_quiz_json
 from app.utils.pdf_export import export_notes_pdf
 from app.utils.topic_segmentation import build_semantic_topic_blocks
 from app.utils.evaluation import evaluate_transcript_quality
-from app.utils.diarization import infer_speaker_roles
+from app.utils.diarization import apply_optional_diarization, infer_speaker_roles
 from app.utils.vlm_benchmark import build_vlm_benchmark
 from app.utils.vlm import enrich_keyframes_with_vlm
+from app.job_queue import (
+    configured_job_backend, create_job, enqueue_rq_job, latest_job_status,
+    read_job_status, update_job_status
+)
+from app.storage import get_storage_backend
 
 app = FastAPI(title="EchoNotes AI - Backend API")
 
@@ -94,7 +99,9 @@ state = {
     # Dataset generation state
     "dataset_status": "idle",       # idle, exporting, completed, error
     "dataset_progress": 0,
-    "last_metrics": {}
+    "last_metrics": {},
+    "active_job_id": None,
+    "storage_artifacts": {},
 }
 
 # Thread lock for pipeline execution
@@ -154,6 +161,18 @@ def markdown_for_client(markdown_text: str) -> str:
 
     return re.sub(r"!\[([^\]]*)\]\(([^)]+)\)", replace_image, markdown_text or "")
 
+
+def sync_storage_artifact(local_path: Path, object_name: str) -> Optional[str]:
+    try:
+        if not local_path.exists():
+            return None
+        url = get_storage_backend().put_file(local_path, object_name)
+        state.setdefault("storage_artifacts", {})[object_name] = url
+        return url
+    except Exception as exc:
+        state.setdefault("storage_artifacts", {})[object_name] = f"storage sync failed: {exc}"
+        return None
+
 load_initial_cache()
 
 # --- BACKGROUND WORKER PIPELINE ---
@@ -174,18 +193,22 @@ def run_pipeline_thread(
     speech_language: str,
     vision_model: str,
     project_id: Optional[str] = None,
+    diarization_enabled: bool = False,
+    job_id: Optional[str] = None,
 ):
     global state
     try:
         run_started = time.perf_counter()
         stage_times: Dict[str, float] = {}
         use_teams_transcript = bool(teams_transcript_path and teams_transcript_path.exists())
-        needs_audio = (not use_teams_transcript) or analyze_acoustics
+        needs_audio = (not use_teams_transcript) or analyze_acoustics or diarization_enabled
         
         # Stage 1: Audio extraction
         state["status"] = "processing"
         state["stage"] = "Extracting 16kHz audio from the video..."
         state["progress"] = 10
+        if job_id:
+            update_job_status(job_id, status="processing", stage=state["stage"], progress=10)
         audio_path = None
         stage_start = time.perf_counter()
         if needs_audio:
@@ -196,6 +219,8 @@ def run_pipeline_thread(
         # Stage 2: Transcribe
         state["stage"] = "Transcribing speech to text..."
         state["progress"] = 25
+        if job_id:
+            update_job_status(job_id, status="processing", stage=state["stage"], progress=25)
         
         stage_start = time.perf_counter()
         if use_teams_transcript:
@@ -219,6 +244,8 @@ def run_pipeline_thread(
                 m_curr, s_curr = int(current_sec // 60), int(current_sec % 60)
                 m_tot, s_tot = int(total_sec // 60), int(total_sec % 60)
                 state["stage"] = f"Whisper transcribing: {m_curr:02d}:{s_curr:02d} / {m_tot:02d}:{s_tot:02d} ({percent * 100:.1f}%)"
+                if job_id:
+                    update_job_status(job_id, status="processing", stage=state["stage"], progress=state["progress"])
             
             raw_transcript = transcribe_audio(
                 audio_path,
@@ -233,6 +260,8 @@ def run_pipeline_thread(
         # Stage 3: Acoustic labels
         state["stage"] = "Analyzing acoustic signals and emphasis..."
         state["progress"] = 60
+        if job_id:
+            update_job_status(job_id, status="processing", stage=state["stage"], progress=60)
         stage_start = time.perf_counter()
         if analyze_acoustics and audio_path:
             enriched_segments = analyze_audio_acoustics(audio_path, raw_transcript["segments"])
@@ -259,10 +288,26 @@ def run_pipeline_thread(
                 enriched_segments.append(copied)
         stage_times["acoustic_sec"] = round(time.perf_counter() - stage_start, 3)
         time.sleep(0.5)
+
+        # Optional speaker diarization. Uses pyannote when configured, otherwise
+        # attaches heuristic role metadata without failing the pipeline.
+        stage_start = time.perf_counter()
+        diarization_metadata = {"enabled": bool(diarization_enabled), "status": "skipped"}
+        if diarization_enabled and audio_path:
+            state["stage"] = "Running speaker diarization..."
+            state["progress"] = 70
+            if job_id:
+                update_job_status(job_id, status="processing", stage=state["stage"], progress=70)
+            diarized = apply_optional_diarization(Path(audio_path), enriched_segments)
+            enriched_segments = diarized.get("segments", enriched_segments)
+            diarization_metadata = diarized.get("metadata", diarization_metadata)
+        stage_times["diarization_sec"] = round(time.perf_counter() - stage_start, 3)
         
         # Stage 4: Visuals
         state["stage"] = f"Analyzing visual keyframes ({visual_mode})..."
         state["progress"] = 80
+        if job_id:
+            update_job_status(job_id, status="processing", stage=state["stage"], progress=80)
         stage_start = time.perf_counter()
         if visual_mode.startswith("Transcript only"):
             slide_keyframes = [{
@@ -284,6 +329,8 @@ def run_pipeline_thread(
 
             if visual_mode.startswith("VLM"):
                 state["stage"] = f"Running local VLM image understanding ({vision_model})..."
+                if job_id:
+                    update_job_status(job_id, status="processing", stage=state["stage"], progress=86)
                 slide_keyframes = enrich_keyframes_with_vlm(
                     slide_keyframes,
                     enriched_segments,
@@ -296,6 +343,8 @@ def run_pipeline_thread(
         # Stage 5: Finalization & Cache Save
         state["stage"] = "Synchronizing transcript and slides..."
         state["progress"] = 95
+        if job_id:
+            update_job_status(job_id, status="processing", stage=state["stage"], progress=95)
         
         # Apply glossary corrections on the fly
         cleaned_enriched_segments = [
@@ -327,6 +376,8 @@ def run_pipeline_thread(
             "visual_mode": visual_mode,
             "vision_model": vision_model if visual_mode.startswith("VLM") else None,
             "acoustic_enabled": analyze_acoustics,
+            "diarization": diarization_metadata,
+            "job_backend": configured_job_backend(),
         }
         state["last_metrics"] = metrics
         if project_id:
@@ -351,12 +402,16 @@ def run_pipeline_thread(
         state["stage"] = "Analysis complete"
         state["progress"] = 100
         state["error"] = None
+        if job_id:
+            update_job_status(job_id, status="completed", stage=state["stage"], progress=100, metrics=metrics)
         
     except Exception as e:
         state["status"] = "error"
         state["stage"] = "Pipeline crashed"
         state["progress"] = 0
         state["error"] = str(e)
+        if job_id:
+            update_job_status(job_id, status="error", stage=state["stage"], progress=0, error=str(e))
 
 # --- CHAT GROUNDED RETRIEVAL HELPERS (Ported from app/ui.py) ---
 
@@ -462,6 +517,22 @@ def get_status():
     # Check if files physically exist to sync completed state if changed on disk
     if state["status"] == "idle" and enriched_cache_path.exists() and slides_cache_path.exists():
         load_initial_cache()
+    active_job = read_job_status(state.get("active_job_id")) or latest_job_status()
+    if active_job and active_job.get("status") in {"queued", "processing", "fallback"}:
+        state["status"] = "processing"
+        state["stage"] = active_job.get("stage") or state["stage"]
+        state["progress"] = int(active_job.get("progress") or state["progress"] or 0)
+        state["error"] = active_job.get("error")
+    elif active_job and active_job.get("status") == "completed" and state["status"] == "processing":
+        state["status"] = "completed"
+        state["stage"] = active_job.get("stage", "Analysis complete")
+        state["progress"] = 100
+        state["last_metrics"] = active_job.get("metrics") or state.get("last_metrics", {})
+    elif active_job and active_job.get("status") == "error":
+        state["status"] = "error"
+        state["stage"] = active_job.get("stage", "Worker failed")
+        state["progress"] = 0
+        state["error"] = active_job.get("error")
     
     return {
         "status": state["status"],
@@ -477,7 +548,9 @@ def get_status():
         "report_started_at": state.get("report_started_at"),
         "dataset_status": state["dataset_status"],
         "dataset_progress": state["dataset_progress"],
-        "last_metrics": state.get("last_metrics", {})
+        "last_metrics": state.get("last_metrics", {}),
+        "active_job_id": state.get("active_job_id"),
+        "active_job": active_job,
     }
 
 @app.post("/api/upload/video")
@@ -506,8 +579,9 @@ async def upload_video(file: UploadFile = File(...)):
         state["progress"] = 0
         state["smart_notes"] = ""
         state["active_transcript_path"] = None
-        
-        return {"filename": file.filename, "status": "uploaded"}
+
+        storage_url = sync_storage_artifact(video_path, f"raw/{video_path.name}")
+        return {"filename": file.filename, "status": "uploaded", "storage_url": storage_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload video: {str(e)}")
 
@@ -526,7 +600,8 @@ async def upload_transcript(file: UploadFile = File(...)):
                 update_project_input(state["active_project_id"], transcript_path=str(transcript_path))
             except Exception as db_exc:
                 state["database"] = {"connected": False, "error": str(db_exc)}
-        return {"filename": file.filename, "status": "uploaded"}
+        storage_url = sync_storage_artifact(transcript_path, f"transcripts/source/{transcript_path.name}")
+        return {"filename": file.filename, "status": "uploaded", "storage_url": storage_url}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload transcript: {str(e)}")
 
@@ -545,6 +620,7 @@ class AnalysisSettings(BaseModel):
     max_slide_count: int = 80
     frame_sample_interval: float = FRAME_CHECK_INTERVAL
     analyze_acoustics_enabled: bool = False
+    diarization_enabled: bool = False
 
 @app.post("/api/analyze")
 def start_analysis(settings: AnalysisSettings, background_tasks: BackgroundTasks):
@@ -564,27 +640,59 @@ def start_analysis(settings: AnalysisSettings, background_tasks: BackgroundTasks
     # Force a clean result set for every new analysis run.
     clear_result_caches()
         
-    # Start thread
+    payload = {
+        "video_path": str(Path(video_path_str)),
+        "whisper_model": settings.whisper_model,
+        "initial_prompt": settings.whisper_prompt,
+        "teams_transcript_path": str(teams_path) if teams_path else None,
+        "hotwords": settings.whisper_hotwords,
+        "use_glossary": settings.use_os_glossary,
+        "visual_mode": settings.vision_mode,
+        "ssim_thresh": settings.ssim_thresh,
+        "min_keyframe_gap_sec": settings.min_slide_gap,
+        "max_keyframes": settings.max_slide_count,
+        "frame_check_interval_sec": settings.frame_sample_interval,
+        "analyze_acoustics": settings.analyze_acoustics_enabled,
+        "speech_language": settings.speech_language,
+        "vision_model": settings.vision_model,
+        "project_id": state.get("active_project_id"),
+        "diarization_enabled": settings.diarization_enabled,
+    }
+    job_id = create_job("analysis", payload)
+    state["active_job_id"] = job_id
+
+    if configured_job_backend() == "redis":
+        try:
+            queue_info = enqueue_rq_job(job_id, payload)
+            state["status"] = "processing"
+            state["stage"] = "Queued in Redis/RQ worker"
+            state["progress"] = 2
+            return {"status": "queued", "job_id": job_id, **queue_info}
+        except Exception as exc:
+            update_job_status(job_id, status="fallback", stage="Redis queue unavailable; using local background task", error=str(exc))
+
     background_tasks.add_task(
         run_pipeline_thread,
-        video_path=Path(video_path_str),
-        whisper_model=settings.whisper_model,
-        initial_prompt=settings.whisper_prompt,
+        video_path=Path(payload["video_path"]),
+        whisper_model=payload["whisper_model"],
+        initial_prompt=payload["initial_prompt"],
         teams_transcript_path=teams_path,
-        hotwords=settings.whisper_hotwords,
-        use_glossary=settings.use_os_glossary,
-        visual_mode=settings.vision_mode,
-        ssim_thresh=settings.ssim_thresh,
-        min_keyframe_gap_sec=settings.min_slide_gap,
-        max_keyframes=settings.max_slide_count,
-        frame_check_interval_sec=settings.frame_sample_interval,
-        analyze_acoustics=settings.analyze_acoustics_enabled,
-        speech_language=settings.speech_language,
-        vision_model=settings.vision_model,
-        project_id=state.get("active_project_id"),
+        hotwords=payload["hotwords"],
+        use_glossary=payload["use_glossary"],
+        visual_mode=payload["visual_mode"],
+        ssim_thresh=payload["ssim_thresh"],
+        min_keyframe_gap_sec=payload["min_keyframe_gap_sec"],
+        max_keyframes=payload["max_keyframes"],
+        frame_check_interval_sec=payload["frame_check_interval_sec"],
+        analyze_acoustics=payload["analyze_acoustics"],
+        speech_language=payload["speech_language"],
+        vision_model=payload["vision_model"],
+        project_id=payload["project_id"],
+        diarization_enabled=payload["diarization_enabled"],
+        job_id=job_id,
     )
-    
-    return {"status": "started"}
+
+    return {"status": "started", "job_id": job_id, "backend": "local-background"}
 
 @app.get("/api/results")
 def get_results():
@@ -840,7 +948,8 @@ def download_report_pdf():
         
         if not pdf_path.exists():
             raise HTTPException(status_code=500, detail="PDF compiler completed but did not produce a file.")
-            
+
+        sync_storage_artifact(pdf_path, f"reports/{pdf_path.name}")
         return FileResponse(
             str(pdf_path),
             media_type="application/pdf",
@@ -1127,6 +1236,7 @@ def export_quiz_bank():
     topic_blocks = json.loads(topic_blocks_cache_path.read_text(encoding="utf-8"))
     path = OUTPUTS_DIR / "EchoNotes_Quiz_Bank.json"
     write_quiz_json(topic_blocks, path)
+    sync_storage_artifact(path, f"exports/{path.name}")
     return FileResponse(str(path), media_type="application/json", filename=path.name)
 
 
@@ -1137,6 +1247,7 @@ def export_anki_cards():
     topic_blocks = json.loads(topic_blocks_cache_path.read_text(encoding="utf-8"))
     path = OUTPUTS_DIR / "EchoNotes_Anki.tsv"
     write_anki_tsv(topic_blocks, path)
+    sync_storage_artifact(path, f"exports/{path.name}")
     return FileResponse(str(path), media_type="text/tab-separated-values", filename=path.name)
 
 
@@ -1149,21 +1260,34 @@ def get_regression_set():
 
 @app.get("/api/deployment/readiness")
 def deployment_readiness():
+    storage_provider = os.getenv("ECHONOTES_STORAGE_PROVIDER", "local").lower()
+    vector_backend = os.getenv("ECHONOTES_VECTOR_BACKEND", "local").lower()
+    job_backend = configured_job_backend()
     return {
         "worker_queue": {
-            "current": "FastAPI BackgroundTasks/threaded local worker",
-            "planned": "Redis + RQ/Celery worker service",
-            "ready": False,
+            "current": "Redis/RQ" if job_backend == "redis" else "FastAPI BackgroundTasks/local",
+            "planned": "Redis/RQ worker service",
+            "ready": job_backend == "redis",
         },
         "storage": {
-            "current": "local filesystem",
-            "planned": "Azure Blob Storage or S3 adapter",
-            "ready": False,
+            "current": storage_provider,
+            "planned": "local, Azure Blob Storage, or S3 adapter",
+            "ready": storage_provider in {"local", "azure", "s3"},
+        },
+        "vector_retrieval": {
+            "current": vector_backend,
+            "planned": "local TF-IDF, Chroma, or FAISS via LangChain",
+            "ready": vector_backend in {"local", "chroma", "faiss"},
+        },
+        "diarization": {
+            "current": os.getenv("ECHONOTES_DIARIZATION_PROVIDER", "heuristic"),
+            "planned": "heuristic fallback or pyannote.audio with Hugging Face token",
+            "ready": os.getenv("ECHONOTES_DIARIZATION_PROVIDER", "heuristic").lower() in {"heuristic", "pyannote"},
         },
         "docker": {
-            "current": "PostgreSQL service in docker-compose",
-            "planned": "backend/frontend/worker services in docker-compose",
-            "ready": False,
+            "current": "PostgreSQL plus full-profile backend/frontend/Redis/RQ worker",
+            "planned": "docker compose --profile full up --build",
+            "ready": True,
         },
         "auth": {
             "current": "Microsoft Graph device flow for Teams import only",
@@ -1171,6 +1295,25 @@ def deployment_readiness():
             "ready": False,
         },
     }
+
+
+@app.post("/api/storage/sync-current")
+def sync_current_artifacts():
+    artifacts = {}
+    candidates = [
+        (enriched_cache_path, f"transcripts/{enriched_cache_path.name}"),
+        (topic_blocks_cache_path, f"transcripts/{topic_blocks_cache_path.name}"),
+        (slides_cache_path, f"visual/{slides_cache_path.name}"),
+        (smart_notes_cache_path, f"reports/{smart_notes_cache_path.name}"),
+        (OUTPUTS_DIR / "EchoNotes_Report.pdf", "reports/EchoNotes_Report.pdf"),
+        (OUTPUTS_DIR / "EchoNotes_Quiz_Bank.json", "exports/EchoNotes_Quiz_Bank.json"),
+        (OUTPUTS_DIR / "EchoNotes_Anki.tsv", "exports/EchoNotes_Anki.tsv"),
+    ]
+    for path, object_name in candidates:
+        url = sync_storage_artifact(path, object_name)
+        if url:
+            artifacts[object_name] = url
+    return {"provider": os.getenv("ECHONOTES_STORAGE_PROVIDER", "local"), "artifacts": artifacts}
 
 @app.get("/api/video")
 def get_video_stream():

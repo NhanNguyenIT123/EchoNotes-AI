@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import re
 from collections import Counter
 from difflib import SequenceMatcher
@@ -74,6 +75,44 @@ def _dedupe_documents(docs: List[Any], limit: int = 10) -> List[Any]:
         if len(unique) >= limit:
             break
     return unique
+
+
+def _external_vector_retrieve(query: str, docs: List[Any], k: int = 10) -> tuple[List[Any], str]:
+    backend = os.getenv("ECHONOTES_VECTOR_BACKEND", "local").strip().lower()
+    if backend in {"", "local", "tfidf"}:
+        return [], "local-tfidf"
+
+    try:
+        from langchain_ollama import OllamaEmbeddings
+
+        embed_model = os.getenv("ECHONOTES_EMBED_MODEL", "nomic-embed-text")
+        embeddings = OllamaEmbeddings(model=embed_model, base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+
+        if backend == "chroma":
+            try:
+                from langchain_chroma import Chroma  # type: ignore
+            except Exception:
+                from langchain_community.vectorstores import Chroma  # type: ignore
+
+            persist_dir = os.getenv("ECHONOTES_CHROMA_DIR", "data/vectorstores/chroma")
+            collection = os.getenv("ECHONOTES_CHROMA_COLLECTION", "echonotes_active")
+            store = Chroma.from_documents(
+                docs,
+                embeddings,
+                collection_name=collection,
+                persist_directory=persist_dir,
+            )
+            return store.similarity_search(query, k=k), f"chroma:{embed_model}"
+
+        if backend == "faiss":
+            from langchain_community.vectorstores import FAISS  # type: ignore
+
+            store = FAISS.from_documents(docs, embeddings)
+            return store.similarity_search(query, k=k), f"faiss:{embed_model}"
+
+        return [], f"unsupported-vector-backend:{backend}"
+    except Exception as exc:
+        return [], f"{backend}-unavailable:{exc}"
 
 
 def _build_documents(
@@ -245,7 +284,8 @@ def answer_with_langchain_rag(
     mode_instruction = _mode_instruction(query_mode)
     retrieval_query = f"{query_mode}: {user_intent}"
     bm25_docs = retriever.invoke(retrieval_query)
-    semantic_docs = _semantic_retrieve(retrieval_query, chunks, k=12)
+    external_docs, vector_engine = _external_vector_retrieve(retrieval_query, chunks, k=12)
+    semantic_docs = external_docs or _semantic_retrieve(retrieval_query, chunks, k=12)
     retrieved = _dedupe_documents(bm25_docs[:6] + semantic_docs[:6] + bm25_docs[6:] + semantic_docs[6:], limit=10)
 
     context_blocks = []
@@ -311,9 +351,10 @@ def answer_with_langchain_rag(
 
     return {
         "answer": answer,
-        "engine": "LangChain Hybrid RAG + BM25 + local semantic vectors + Ollama",
+        "engine": f"LangChain Hybrid RAG + BM25 + {vector_engine} vectors + Ollama",
         "sources": [item["label"] for item in unique_citations[:6]],
         "citations": unique_citations[:6],
+        "vector_backend": vector_engine,
     }
 
 

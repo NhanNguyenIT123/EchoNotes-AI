@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import os
+from pathlib import Path
 from typing import Any, Dict, List
 
 
@@ -34,6 +36,104 @@ def infer_speaker_roles(segments: List[Dict[str, Any]]) -> Dict[str, Any]:
         "speakers": summary,
         "segments": labeled,
     }
+
+
+def apply_optional_diarization(audio_path: Path, segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Attach speaker labels using pyannote.audio when configured.
+
+    Requirements:
+    - ECHONOTES_DIARIZATION_PROVIDER=pyannote
+    - HUGGINGFACE_TOKEN or PYANNOTE_AUTH_TOKEN with access to the pyannote model
+    - pyannote.audio installed from requirements-prod.txt
+
+    If the runtime is not configured, this returns the original segments plus a
+    clear diagnostic instead of failing the whole lecture pipeline.
+    """
+    provider = os.getenv("ECHONOTES_DIARIZATION_PROVIDER", "heuristic").strip().lower()
+    if provider != "pyannote":
+        role_info = infer_speaker_roles(segments)
+        return {
+            "segments": role_info.get("segments", segments),
+            "metadata": {
+                "provider": "heuristic",
+                "status": "fallback",
+                "reason": "Set ECHONOTES_DIARIZATION_PROVIDER=pyannote to enable neural diarization.",
+            },
+        }
+
+    token = os.getenv("PYANNOTE_AUTH_TOKEN") or os.getenv("HUGGINGFACE_TOKEN")
+    if not token:
+        role_info = infer_speaker_roles(segments)
+        return {
+            "segments": role_info.get("segments", segments),
+            "metadata": {
+                "provider": "pyannote",
+                "status": "fallback",
+                "reason": "Missing PYANNOTE_AUTH_TOKEN/HUGGINGFACE_TOKEN.",
+            },
+        }
+
+    try:
+        from pyannote.audio import Pipeline  # type: ignore
+    except Exception as exc:
+        role_info = infer_speaker_roles(segments)
+        return {
+            "segments": role_info.get("segments", segments),
+            "metadata": {
+                "provider": "pyannote",
+                "status": "fallback",
+                "reason": f"pyannote.audio is not installed or failed to import: {exc}",
+            },
+        }
+
+    try:
+        model_name = os.getenv("PYANNOTE_MODEL", "pyannote/speaker-diarization-3.1")
+        pipeline = Pipeline.from_pretrained(model_name, use_auth_token=token)
+        diarization = pipeline(str(audio_path))
+        turns = []
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            turns.append({"start": float(turn.start), "end": float(turn.end), "speaker": str(speaker)})
+
+        labeled = []
+        for segment in segments or []:
+            start = float(segment.get("start", 0) or 0)
+            end = float(segment.get("end", start + 1) or start + 1)
+            speaker = _best_overlap_speaker(start, end, turns)
+            labeled.append({**segment, "speaker": speaker or segment.get("speaker") or "unknown"})
+
+        role_info = infer_speaker_roles(labeled)
+        return {
+            "segments": role_info.get("segments", labeled),
+            "metadata": {
+                "provider": "pyannote",
+                "status": "completed",
+                "model": model_name,
+                "turns": len(turns),
+                "speakers": len({turn["speaker"] for turn in turns}),
+            },
+        }
+    except Exception as exc:
+        role_info = infer_speaker_roles(segments)
+        return {
+            "segments": role_info.get("segments", segments),
+            "metadata": {
+                "provider": "pyannote",
+                "status": "fallback",
+                "reason": str(exc),
+            },
+        }
+
+
+def _best_overlap_speaker(start: float, end: float, turns: List[Dict[str, Any]]) -> str | None:
+    overlaps: Dict[str, float] = {}
+    for turn in turns:
+        overlap = max(0.0, min(end, float(turn["end"])) - max(start, float(turn["start"])))
+        if overlap > 0:
+            overlaps[turn["speaker"]] = overlaps.get(turn["speaker"], 0.0) + overlap
+    if not overlaps:
+        return None
+    return max(overlaps.items(), key=lambda item: item[1])[0]
 
 
 def _extract_speaker_prefix(text: str) -> str | None:

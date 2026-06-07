@@ -105,6 +105,7 @@ export default function App() {
   const [maxKeyframes, setMaxKeyframes] = useState(80);
   const [frameCheckInterval, setFrameCheckInterval] = useState(10);
   const [acousticToggle, setAcousticToggle] = useState(false);
+  const [diarizationToggle, setDiarizationToggle] = useState(false);
   const [useOsGlossary, setUseOsGlossary] = useState(true);
 
   // Teams Link states
@@ -356,7 +357,8 @@ export default function App() {
         min_slide_gap: minKeyframeGap,
         max_slide_count: maxKeyframes,
         frame_sample_interval: frameCheckInterval,
-        analyze_acoustics_enabled: acousticToggle
+        analyze_acoustics_enabled: acousticToggle,
+        diarization_enabled: diarizationToggle
       });
       pollStatus();
       fetchProjects();
@@ -447,6 +449,16 @@ export default function App() {
       alert('PDF artifact ingested into grounded Q&A context.');
     } catch (err: any) {
       alert(`PDF ingest failed: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleSyncStorage = async () => {
+    try {
+      const res = await axios.post(`${API_BASE}/storage/sync-current`);
+      const count = Object.keys(res.data.artifacts || {}).length;
+      alert(`Storage sync completed with ${count} artifacts using provider: ${res.data.provider}`);
+    } catch (err: any) {
+      alert(`Storage sync failed: ${err.response?.data?.detail || err.message}`);
     }
   };
 
@@ -914,6 +926,16 @@ export default function App() {
             onChange={e => setAcousticToggle(e.target.checked)}
           />
           Enable Acoustic Emphasis
+        </label>
+
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            className="checkbox-input"
+            checked={diarizationToggle}
+            onChange={e => setDiarizationToggle(e.target.checked)}
+          />
+          Enable Speaker Diarization
         </label>
 
         <label className="checkbox-label">
@@ -1444,6 +1466,7 @@ export default function App() {
                   <h3>Exports & Readiness</h3>
                   <div className="eval-actions">
                     <button className="btn-secondary" onClick={handleIngestPdf}>Ingest PDF for Q&A</button>
+                    <button className="btn-secondary" onClick={handleSyncStorage}>Sync Artifacts</button>
                     <button className="btn-secondary" onClick={() => downloadFromEndpoint('/export/quiz')}>Download Quiz JSON</button>
                     <button className="btn-secondary" onClick={() => downloadFromEndpoint('/export/anki')}>Download Anki TSV</button>
                     <button className="btn-secondary" onClick={() => window.open(`${API_BASE}/evaluation/regression-set`, '_blank')}>Regression Set JSON</button>

@@ -35,6 +35,10 @@ services:
     environment:
       ECHONOTES_DATABASE_URL: postgresql+psycopg://echonotes:echonotes@postgres:5432/echonotes
       ECHONOTES_REDIS_URL: redis://redis:6379/0
+      ECHONOTES_JOB_BACKEND: redis
+      ECHONOTES_RQ_QUEUE: echonotes
+      ECHONOTES_STORAGE_PROVIDER: local
+      ECHONOTES_VECTOR_BACKEND: local
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,6 +60,10 @@ services:
     environment:
       ECHONOTES_DATABASE_URL: postgresql+psycopg://echonotes:echonotes@postgres:5432/echonotes
       ECHONOTES_REDIS_URL: redis://redis:6379/0
+      ECHONOTES_JOB_BACKEND: redis
+      ECHONOTES_RQ_QUEUE: echonotes
+      ECHONOTES_STORAGE_PROVIDER: local
+      ECHONOTES_VECTOR_BACKEND: local
     depends_on:
       postgres:
         condition: service_healthy
