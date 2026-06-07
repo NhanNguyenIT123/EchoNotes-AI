@@ -88,10 +88,10 @@ function renderInlineMarkdown(text: string) {
   const parts = (text || "").split(/(\*\*.*?\*\*|`.*?`)/g).filter(Boolean);
   return parts.map((part, idx) => {
     if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={idx}>{part.slice(2, -2)}</strong>;
+      return <strong key={idx} className="inline-markdown-bold">{part.slice(2, -2)}</strong>;
     }
     if (part.startsWith("`") && part.endsWith("`")) {
-      return <code key={idx}>{part.slice(1, -1)}</code>;
+      return <code key={idx} className="inline-markdown-code">{part.slice(1, -1)}</code>;
     }
     return <React.Fragment key={idx}>{part}</React.Fragment>;
   });
@@ -197,21 +197,21 @@ function SimpleMarkdown({ markdown }: { markdown: string }) {
 
     // Headings
     if (line.startsWith('# ')) {
-      elements.push(<h1 key={index}>{line.substring(2)}</h1>);
+      elements.push(<h1 key={index}>{renderInlineMarkdown(line.substring(2))}</h1>);
     } else if (line.startsWith('## ')) {
-      elements.push(<h2 key={index}>{line.substring(3)}</h2>);
+      elements.push(<h2 key={index}>{renderInlineMarkdown(line.substring(3))}</h2>);
     } else if (line.startsWith('### ')) {
-      elements.push(<h3 key={index}>{line.substring(4)}</h3>);
+      elements.push(<h3 key={index}>{renderInlineMarkdown(line.substring(4))}</h3>);
     } else if (line.startsWith('#### ')) {
-      elements.push(<h4 key={index}>{line.substring(5)}</h4>);
+      elements.push(<h4 key={index}>{renderInlineMarkdown(line.substring(5))}</h4>);
     }
     // Blockquote
     else if (line.startsWith('> ')) {
-      elements.push(<blockquote key={index} style={{ borderLeft: '3px solid var(--blue-normal)', paddingLeft: '1rem', color: 'var(--text-secondary)', margin: '1rem 0', fontStyle: 'italic' }}>{line.substring(2)}</blockquote>);
+      elements.push(<blockquote key={index} style={{ borderLeft: '3px solid var(--blue-normal)', paddingLeft: '1rem', color: 'var(--text-secondary)', margin: '1rem 0', fontStyle: 'italic' }}>{renderInlineMarkdown(line.substring(2))}</blockquote>);
     }
     // Bullets
     else if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
-      elements.push(<li key={index} style={{ marginLeft: '1.5rem', marginTop: '0.25rem', marginBottom: '0.25rem' }}>{line.trim().substring(2)}</li>);
+      elements.push(<li key={index} style={{ marginLeft: '1.5rem', marginTop: '0.25rem', marginBottom: '0.25rem' }}>{renderInlineMarkdown(line.trim().substring(2))}</li>);
     }
     // Divider
     else if (line.trim() === '---') {
@@ -219,7 +219,7 @@ function SimpleMarkdown({ markdown }: { markdown: string }) {
     }
     // Paragraph / Normal line
     else if (line.trim()) {
-      elements.push(<p key={index} style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>{line}</p>);
+      elements.push(<p key={index} style={{ marginBottom: '0.75rem', color: 'var(--text-secondary)' }}>{renderInlineMarkdown(line)}</p>);
     }
   });
 
