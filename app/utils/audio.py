@@ -182,4 +182,16 @@ def transcribe_audio(
         print(f"Saved transcribed text cache to: {transcript_cache_path}")
     except Exception:
         print("[OK] Saved transcribed text cache.")
+        
+    # Free VRAM/RAM held by Faster-Whisper model to protect Ollama note generation
+    try:
+        del model
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+        
     return result

@@ -140,5 +140,15 @@ def detect_slide_transitions(
         frame_idx += frame_step
         
     cap.release()
+    if reader:
+        try:
+            del reader
+            import gc
+            import torch
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
     print(f"Slide transition detection complete. Extracted {len(slide_keyframes)} slides.")
     return slide_keyframes
