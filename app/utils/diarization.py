@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import os
+import unicodedata
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -162,12 +163,17 @@ def _extract_speaker_prefix(text: str) -> str | None:
 
 
 def _role_from_text(text: str, idx: int) -> str:
-    lower = (text or "").lower()
+    lower = _normalize_text(text)
     instructor_markers = [
         "let's", "we will", "i will show", "you can see", "for example", "remember",
         "correct", "this means", "what we do", "the idea is", "you need to",
+        "chung ta", "cac ban", "vi du", "dau tien", "tiep theo", "nhu vay",
+        "deadline", "lab",
     ]
-    student_markers = ["can you repeat", "i have a question", "yes", "no", "okay", "sorry", "i don't understand"]
+    student_markers = [
+        "can you repeat", "i have a question", "yes", "no", "okay", "sorry", "i don't understand",
+        "da", "co a", "em", "khong nghe", "khong thay", "chua hieu",
+    ]
     score_i = sum(1 for marker in instructor_markers if marker in lower)
     score_s = sum(1 for marker in student_markers if marker in lower)
     if idx < 8 and any(marker in lower for marker in ["can you see my screen", "before we start"]):
@@ -183,7 +189,7 @@ def _aggregate_role_for_speaker(speaker: str, info: Dict[str, Any], is_lead_spea
     if speaker == "unknown":
         return max(info["role_votes"].items(), key=lambda item: item[1])[0] if info["role_votes"] else "participant"
 
-    texts = " ".join(info.get("texts", [])[:80]).lower()
+    texts = _normalize_text(" ".join(info.get("texts", [])[:80]))
     duration = float(info.get("duration", 0.0) or 0.0)
     segments = int(info.get("segments", 0) or 0)
     words = int(info.get("words", 0) or 0)
@@ -192,12 +198,12 @@ def _aggregate_role_for_speaker(speaker: str, info: Dict[str, Any], is_lead_spea
     instructor_cues = [
         "let's", "we will", "i will show", "you can see", "for example", "remember",
         "this means", "you need to", "quantum", "round robin", "feedback", "queue",
-        "chúng ta", "các bạn", "ví dụ", "thầy", "cô", "mình sẽ", "ta sẽ", "bài này",
-        "đầu tiên", "tiếp theo", "như vậy", "deadline", "lab",
+        "chung ta", "cac ban", "vi du", "thay", "co", "minh se", "ta se", "bai nay",
+        "dau tien", "tiep theo", "nhu vay", "deadline", "lab",
     ]
     student_cues = [
-        "dạ", "có ạ", "em", "yes", "no", "okay", "sorry", "i have a question",
-        "can you repeat", "chưa hiểu", "hỏi", "không nghe", "không thấy",
+        "da", "co a", "em", "yes", "no", "okay", "sorry", "i have a question",
+        "can you repeat", "chua hieu", "hoi", "khong nghe", "khong thay",
     ]
     instructor_score = sum(1 for cue in instructor_cues if cue in texts)
     student_score = sum(1 for cue in student_cues if cue in texts)
@@ -211,3 +217,9 @@ def _aggregate_role_for_speaker(speaker: str, info: Dict[str, Any], is_lead_spea
     if student_score > instructor_score:
         return "student"
     return "participant"
+
+
+def _normalize_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text or "")
+    without_marks = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return without_marks.replace("đ", "d").replace("Đ", "D").lower()

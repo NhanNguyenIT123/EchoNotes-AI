@@ -63,6 +63,15 @@ function formatMetricValue(value: unknown) {
   return String(value);
 }
 
+function formatSpeakerLabel(seg: any) {
+  const label = seg?.speaker || seg?.speaker_id || 'unknown';
+  return label === 'unknown' ? 'unknown' : String(label).replace(/^SPEAKER_/, 'SPK ');
+}
+
+function formatSpeakerRole(seg: any) {
+  return String(seg?.speaker_role || seg?.role || 'participant').toLowerCase();
+}
+
 function cleanMarkdownText(text: string) {
   return (text || "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
@@ -1380,6 +1389,8 @@ export default function App() {
                         .map(({ seg, idx }) => {
                           const isImportant = seg.acoustics?.is_important;
                           const isActive = idx === activeTranscriptIndex;
+                          const speakerRole = formatSpeakerRole(seg);
+                          const speakerLabel = formatSpeakerLabel(seg);
                           return (
                             <div 
                               key={idx} 
@@ -1390,6 +1401,10 @@ export default function App() {
                             >
                               <div className="row-timestamp">
                                 {formatSecs(seg.start)}
+                              </div>
+                              <div className="row-speaker">
+                                <span className={`speaker-chip ${speakerRole}`}>{speakerLabel}</span>
+                                <span className="speaker-role">{speakerRole}</span>
                               </div>
                               <div className="row-text">
                                 {seg.text}
@@ -1686,7 +1701,7 @@ export default function App() {
                       <div className="speaker-row" key={idx}>
                         <span>{speaker.speaker}</span>
                         <strong>{speaker.role}</strong>
-                        <em>{speaker.segments} segments · {speaker.duration_sec ?? 0}s</em>
+                        <em>{speaker.segments} segments | {speaker.duration_sec ?? 0}s</em>
                       </div>
                     ))}
                   </div>

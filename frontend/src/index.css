@@ -818,7 +818,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .transcript-row {
   display: grid;
-  grid-template-columns: 60px 1fr;
+  grid-template-columns: 60px minmax(88px, 112px) 1fr;
   gap: 0.75rem;
   padding: 0.6rem 0.85rem;
   border-radius: 8px;
@@ -894,6 +894,57 @@ h1, h2, h3, h4, h5, h6 {
   align-items: center;
 }
 
+.row-speaker {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.speaker-chip {
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.16rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.speaker-chip.instructor {
+  border-color: rgba(0, 229, 167, 0.42);
+  background: rgba(0, 229, 167, 0.12);
+  color: var(--green-complete);
+}
+
+.speaker-chip.student {
+  border-color: rgba(255, 184, 77, 0.5);
+  background: rgba(255, 184, 77, 0.14);
+  color: #ffbf66;
+}
+
+.speaker-chip.unknown {
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+
+.speaker-role {
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .blue-row .row-timestamp {
   color: var(--blue-normal);
 }
@@ -910,6 +961,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .transcript-row.active-row .row-timestamp,
+.transcript-row.active-row .speaker-role,
 .transcript-row.active-row .row-text {
   color: #fff;
   text-shadow: 0 0 18px rgba(255, 255, 255, 0.16);
@@ -1576,6 +1628,7 @@ h1, h2, h3, h4, h5, h6 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 1rem;
+  align-items: start;
   height: 100%;
   overflow-y: auto;
   padding-right: 0.25rem;
@@ -1584,6 +1637,8 @@ h1, h2, h3, h4, h5, h6 {
 .eval-card {
   padding: 1rem;
   min-height: 180px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .eval-card-header {
@@ -1634,15 +1689,30 @@ h1, h2, h3, h4, h5, h6 {
 .speaker-list {
   display: grid;
   gap: 0.5rem;
+  max-height: 280px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
 }
 
 .speaker-row {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: minmax(0, 1fr) auto minmax(90px, auto);
   gap: 0.6rem;
   align-items: center;
   color: var(--text-secondary);
   font-size: 0.82rem;
+  min-width: 0;
+  padding: 0.35rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.speaker-row span,
+.speaker-row strong,
+.speaker-row em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .speaker-row strong {
