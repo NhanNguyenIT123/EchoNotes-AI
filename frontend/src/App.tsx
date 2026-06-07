@@ -10,6 +10,16 @@ const API_BASE = 'http://localhost:8000/api';
 type Citation = { label: string; source?: string; title?: string; timestamp?: string; start?: number | null; snippet?: string };
 type ChatItem = { role: 'user' | 'assistant'; content: string; citations?: Citation[]; engine?: string; message_id?: string; latency_ms?: number; mode?: string };
 
+function formatAblationMode(mode: string) {
+  const labels: Record<string, string> = {
+    transcript_only: 'Transcript only',
+    ocr_only: 'OCR only',
+    vlm_only: 'Image understanding only',
+    ocr_plus_vlm_plus_transcript: 'OCR + image understanding + transcript'
+  };
+  return labels[mode] || mode.replace(/_/g, ' ');
+}
+
 // Simple Markdown Renderer component to avoid third-party HTML/Vite build friction
 function SimpleMarkdown({ markdown }: { markdown: string }) {
   if (!markdown) return <p style={{ color: 'var(--text-muted)' }}>No notes generated yet.</p>;
@@ -817,7 +827,7 @@ export default function App() {
         </div>
 
         <div className="input-group">
-          <label className="input-label">Vision Model (Ollama VLM)</label>
+          <label className="input-label">Image Understanding Model (Ollama)</label>
           <select className="form-select" value={visionModel} onChange={e => setVisionModel(e.target.value)}>
             {Array.from(new Set([visionModel, ...ollamaModels, 'llava:7b'])).map(model => (
               <option key={model} value={model}>{model}</option>
@@ -858,12 +868,12 @@ export default function App() {
         <span className="sidebar-section-title"><Eye size={14} /> Visual & Acoustic Analysis</span>
 
         <div className="input-group">
-          <label className="input-label">Visual Mode</label>
+          <label className="input-label">Visual Analysis Mode</label>
           <select className="form-select" value={visualMode} onChange={e => setVisualMode(e.target.value)}>
             <option value="Transcript only: skip slides/keyframes">Transcript only</option>
             <option value="Fast: capture keyframes, no OCR">Fast Keyframes (No OCR)</option>
             <option value="Full: capture keyframes + OCR">Full Keyframes + OCR</option>
-            <option value="VLM: keyframes + image understanding">VLM Keyframes + Image Understanding</option>
+            <option value="VLM: keyframes + image understanding">AI Keyframes + Image Understanding</option>
           </select>
         </div>
 
@@ -1267,7 +1277,7 @@ export default function App() {
                         <div className="keyframe-info">
                           {slide.vlm_description && (
                             <div className="keyframe-ocr-box">
-                              <strong>VLM image understanding:</strong>
+                              <strong>Visual AI interpretation:</strong>
                               <p style={{ marginTop: '0.25rem', whiteSpace: 'pre-wrap' }}>{slide.vlm_description}</p>
                             </div>
                           )}
@@ -1425,12 +1435,12 @@ export default function App() {
                 </div>
 
                 <div className="glass-panel eval-card">
-                  <h3>VLM Benchmark</h3>
+                  <h3>Visual Understanding Check</h3>
                   <div className="metric-grid">
                     <div className="metric-tile"><span>Slides evaluated</span><strong>{evaluationSummary?.vlm_benchmark?.slides_evaluated ?? 0}</strong></div>
                     <div className="metric-tile"><span>OCR coverage</span><strong>{evaluationSummary?.vlm_benchmark?.ocr_coverage ?? 0}</strong></div>
-                    <div className="metric-tile"><span>VLM coverage</span><strong>{evaluationSummary?.vlm_benchmark?.vlm_coverage ?? 0}</strong></div>
-                    <div className="metric-tile"><span>OCR+VLM confidence</span><strong>{evaluationSummary?.vlm_benchmark?.avg_ocr_vlm_confidence ?? 0}</strong></div>
+                    <div className="metric-tile"><span>Image analysis coverage</span><strong>{evaluationSummary?.vlm_benchmark?.vlm_coverage ?? 0}</strong></div>
+                    <div className="metric-tile"><span>Fused visual confidence</span><strong>{evaluationSummary?.vlm_benchmark?.avg_ocr_vlm_confidence ?? 0}</strong></div>
                   </div>
                 </div>
 
@@ -1440,7 +1450,7 @@ export default function App() {
                   <div className="speaker-list">
                     {(evaluationSummary?.ablation?.rows || []).map((row: any) => (
                       <div className="speaker-row" key={row.mode}>
-                        <span>{row.mode.replace(/_/g, ' ')}</span>
+                        <span>{formatAblationMode(row.mode)}</span>
                         <strong>{row.confidence}</strong>
                         <em>{row.evidence_units} units</em>
                       </div>

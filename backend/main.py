@@ -327,7 +327,7 @@ def run_pipeline_thread(
             )
 
             if visual_mode.startswith("VLM"):
-                state["stage"] = f"Running local VLM image understanding ({vision_model})..."
+                state["stage"] = f"Running visual image understanding ({vision_model})..."
                 if job_id:
                     update_job_status(job_id, status="processing", stage=state["stage"], progress=86)
                 slide_keyframes = enrich_keyframes_with_vlm(

@@ -66,7 +66,7 @@ def analyze_keyframe_with_ollama_vlm(
 
     response = requests.post(f"{OLLAMA_API_URL}/chat", json=payload, timeout=(10, timeout_sec))
     if response.status_code != 200:
-        raise RuntimeError(f"Ollama VLM returned HTTP {response.status_code}: {response.text[:300]}")
+        raise RuntimeError(f"Ollama vision model returned HTTP {response.status_code}: {response.text[:300]}")
     return (response.json().get("message", {}).get("content") or "").strip()
 
 
@@ -77,7 +77,7 @@ def enrich_keyframes_with_vlm(
     max_frames: int = 12,
 ) -> List[Dict[str, Any]]:
     """
-    Adds `vlm_description` to keyframes using a local Ollama vision model.
+    Adds image-understanding descriptions to keyframes using a local Ollama vision model.
     The cap keeps long lectures usable on local machines.
     """
     enriched: List[Dict[str, Any]] = []
@@ -107,7 +107,7 @@ def enrich_keyframes_with_vlm(
                 nearby_transcript=nearby,
             )
         except Exception as exc:
-            slide_copy["vlm_description"] = f"[VLM unavailable for this keyframe: {exc}]"
+            slide_copy["vlm_description"] = f"[Image understanding unavailable for this keyframe: {exc}]"
         enriched.append(slide_copy)
 
     return enriched

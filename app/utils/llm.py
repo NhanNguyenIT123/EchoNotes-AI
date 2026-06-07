@@ -314,7 +314,7 @@ def generate_offline_study_notes(slides: List[Dict[str, Any]], transcript: List[
         md.append("\n")
 
         if item.get("vlm_description"):
-            md.append("### VLM Image Understanding\n")
+            md.append("### Visual Image Understanding\n")
             md.append(f"{item['vlm_description'].strip()}\n\n")
 
         if item.get("speech_text"):
@@ -465,7 +465,7 @@ def build_grounded_visual_analysis(item: Dict[str, Any], max_bullets: int = 4) -
 
     bullets: List[str] = []
     if vlm_text:
-        bullets.append(f"Local VLM interpretation: {vlm_text[:260]}")
+        bullets.append(f"Visual AI interpretation: {vlm_text[:260]}")
     if ocr_text:
         ocr_lines = [line.strip() for line in ocr_text.splitlines() if line.strip()]
         visual_terms = ", ".join(f"`{kw}`" for kw in keywords[:6]) if keywords else "visible UI/text elements"
@@ -518,7 +518,7 @@ def generate_offline_slide_block(item: Dict[str, Any], slide_num: int) -> str:
     md.append("\n")
 
     if item.get("vlm_description"):
-        md.append("### VLM Image Understanding\n")
+        md.append("### Visual Image Understanding\n")
         md.append(f"{item['vlm_description'].strip()}\n\n")
 
     if item.get("speech_text"):
@@ -765,7 +765,7 @@ def generate_smart_notes_stream(
             user_context = (
                 f"Data for visual context {slide_num}:\n"
                 f"- **Extracted visual text:** \"{item['ocr_text']}\"\n"
-                f"- **VLM image understanding:** \"{item.get('vlm_description', '')}\"\n"
+                f"- **Visual image understanding:** \"{item.get('vlm_description', '')}\"\n"
                 "- **Transcript:** No teacher speech is aligned to this frame.\n"
             )
             
@@ -791,7 +791,7 @@ def generate_smart_notes_stream(
             user_context = (
                 f"Data for visual context {slide_num}:\n"
                 f"- **Extracted visual text:** \"{item['ocr_text']}\"\n"
-                f"- **VLM image understanding:** \"{item.get('vlm_description', '')}\"\n"
+                f"- **Visual image understanding:** \"{item.get('vlm_description', '')}\"\n"
                 f"- **Aligned transcript:** \"{dense_speech}\"\n"
             )
             
@@ -865,7 +865,7 @@ def generate_smart_notes_stream(
                     for bullet in summarize_chunk_offline(item["speech_text"], max_sentences=4):
                         yield f"- {bullet}\n"
                 elif item.get("vlm_description"):
-                    yield f"### VLM Image Understanding\n\n{item['vlm_description'].strip()}\n"
+                    yield f"### Visual Image Understanding\n\n{item['vlm_description'].strip()}\n"
                 elif item.get("ocr_text"):
                     yield f"### Visual Content\n\n{item['ocr_text'].strip()}\n"
                 else:
