@@ -1435,16 +1435,6 @@ def get_video_stream(request: Request, v: Optional[str] = None):
         video_path_str = state.get("active_video_path")
 
     if not video_path_str or not Path(video_path_str).exists():
-        # Fallback: scan RAW_DIR for any supported video file
-        raw_videos = sorted(
-            list(RAW_DIR.glob("*.mp4")) + list(RAW_DIR.glob("*.mkv")) + list(RAW_DIR.glob("*.avi")) + list(RAW_DIR.glob("*.mov")),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True
-        )
-        if raw_videos:
-            video_path_str = str(raw_videos[0])
-
-    if not video_path_str or not Path(video_path_str).exists():
         raise HTTPException(status_code=404, detail="No video file loaded in session.")
 
     video_path = Path(video_path_str)
@@ -1721,6 +1711,8 @@ def clear_session_cache():
         "active_video_path": None,
         "active_video_name": None,
         "active_transcript_path": None,
+        "active_project_id": None,
+        "database": db_health(),
         
         "graph_device_flow": None,
         "graph_access_token": None,
@@ -1729,10 +1721,13 @@ def clear_session_cache():
         
         "smart_notes": "",
         "generating_report": False,
+        "report_started_at": None,
         
         "dataset_status": "idle",
         "dataset_progress": 0,
-        "last_metrics": {}
+        "last_metrics": {},
+        "active_job_id": None,
+        "storage_artifacts": {}
     }
     
     return {"status": "cleared"}
