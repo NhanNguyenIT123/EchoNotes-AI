@@ -1,4 +1,4 @@
-﻿import json
+import json
 import requests
 import re
 from pathlib import Path
@@ -664,10 +664,10 @@ def generate_smart_notes_stream(
                 "options": {
                     "num_ctx": 4096,
                     "temperature": 0.2,
-                    "repeat_penalty": 1.35,
-                    "repeat_last_n": 128,
-                    "presence_penalty": 0.4,
-                    "frequency_penalty": 0.4
+                    "repeat_penalty": 1.1,
+                    "repeat_last_n": 64,
+                    "presence_penalty": 0.0,
+                    "frequency_penalty": 0.0
                 }
             }
 
@@ -830,10 +830,10 @@ def generate_smart_notes_stream(
             "options": {
                 "num_ctx": 4096,
                 "temperature": 0.3,
-                "repeat_penalty": 1.4, # Strongly penalize repetitions for 1.5B models
-                "repeat_last_n": 128,
-                "presence_penalty": 0.5,
-                "frequency_penalty": 0.5,
+                "repeat_penalty": 1.1,
+                "repeat_last_n": 64,
+                "presence_penalty": 0.0,
+                "frequency_penalty": 0.0,
                 "stop": ["## Slide", "## 🖼️ Slide", "---", "### SLIDE", "Slide "] # Strict stop tokens
             }
         }
@@ -949,10 +949,10 @@ def post_process_transcript_with_llm(
             "options": {
                 "num_ctx": 4096,
                 "temperature": 0.3,
-                "repeat_penalty": 1.25,
+                "repeat_penalty": 1.1,
                 "repeat_last_n": 64,
-                "presence_penalty": 0.3,
-                "frequency_penalty": 0.3
+                "presence_penalty": 0.0,
+                "frequency_penalty": 0.0
             }
         }
         
