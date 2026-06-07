@@ -1674,12 +1674,19 @@ export default function App() {
                 <div className="glass-panel eval-card">
                   <h3>Speaker Role Pass</h3>
                   <p className="eval-muted">{evaluationSummary?.speaker_roles?.engine || 'No speaker role data yet.'}</p>
+                  {evaluationSummary?.speaker_roles?.diarization_status && (
+                    <div className="speaker-row">
+                      <span>{evaluationSummary.speaker_roles.diarization_status.provider || 'diarization'}</span>
+                      <strong>{evaluationSummary.speaker_roles.diarization_status.status || 'unknown'}</strong>
+                      <em>{evaluationSummary.speaker_roles.diarization_status.device || evaluationSummary.speaker_roles.diarization_status.reason || ''}</em>
+                    </div>
+                  )}
                   <div className="speaker-list">
                     {(evaluationSummary?.speaker_roles?.speakers || []).slice(0, 8).map((speaker: any, idx: number) => (
                       <div className="speaker-row" key={idx}>
                         <span>{speaker.speaker}</span>
                         <strong>{speaker.role}</strong>
-                        <em>{speaker.segments} segments</em>
+                        <em>{speaker.segments} segments · {speaker.duration_sec ?? 0}s</em>
                       </div>
                     ))}
                   </div>

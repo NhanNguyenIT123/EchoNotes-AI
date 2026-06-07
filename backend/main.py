@@ -1140,6 +1140,11 @@ def get_evaluation_summary():
         "rag_answer_latency_avg_ms": round(sum(chat_latencies) / len(chat_latencies), 1) if chat_latencies else None,
         "evaluations_stored": len(list_evaluation_records(state.get("active_project_id"), limit=20)) if state.get("active_project_id") else 0,
     }
+    speaker_role_preview["diarization_status"] = metrics.get("diarization") or {
+        "provider": "unknown",
+        "status": "not_available",
+        "reason": "Run the pipeline with Enable Speaker Diarization turned on.",
+    }
     return {
         "metrics": metrics,
         "transcript_quality": transcript_quality,

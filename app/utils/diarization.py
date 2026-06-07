@@ -20,19 +20,32 @@ def infer_speaker_roles(segments: List[Dict[str, Any]]) -> Dict[str, Any]:
         text = (seg.get("text") or "").strip()
         speaker = seg.get("speaker") or _extract_speaker_prefix(text) or "unknown"
         role = _role_from_text(text, idx)
-        speakers.setdefault(speaker, {"segments": 0, "role_votes": {}})
+        duration = max(0.0, float(seg.get("end", 0) or 0) - float(seg.get("start", 0) or 0))
+        speakers.setdefault(speaker, {"segments": 0, "role_votes": {}, "duration": 0.0, "words": 0, "texts": []})
         speakers[speaker]["segments"] += 1
+        speakers[speaker]["duration"] += duration
+        speakers[speaker]["words"] += len(text.split())
+        if text:
+            speakers[speaker]["texts"].append(text)
         speakers[speaker]["role_votes"][role] = speakers[speaker]["role_votes"].get(role, 0) + 1
         labeled.append({**seg, "speaker": speaker, "speaker_role": role})
 
     summary = []
+    ranked_by_duration = sorted(speakers.items(), key=lambda item: item[1]["duration"], reverse=True)
+    lead_speaker = ranked_by_duration[0][0] if ranked_by_duration else None
     for speaker, info in speakers.items():
-        role = max(info["role_votes"].items(), key=lambda item: item[1])[0]
-        summary.append({"speaker": speaker, "role": role, "segments": info["segments"]})
+        role = _aggregate_role_for_speaker(speaker, info, speaker == lead_speaker)
+        summary.append({
+            "speaker": speaker,
+            "role": role,
+            "segments": info["segments"],
+            "duration_sec": round(info["duration"], 2),
+            "words": info["words"],
+        })
 
     return {
         "available": bool(labeled),
-        "engine": "heuristic speaker-role pass; WhisperX/pyannote-ready",
+        "engine": "speaker-role pass over transcript labels; pyannote labels are used when available",
         "speakers": summary,
         "segments": labeled,
     }
@@ -162,5 +175,39 @@ def _role_from_text(text: str, idx: int) -> str:
     if score_i >= score_s and score_i > 0:
         return "instructor"
     if score_s > 0:
+        return "student"
+    return "participant"
+
+
+def _aggregate_role_for_speaker(speaker: str, info: Dict[str, Any], is_lead_speaker: bool) -> str:
+    if speaker == "unknown":
+        return max(info["role_votes"].items(), key=lambda item: item[1])[0] if info["role_votes"] else "participant"
+
+    texts = " ".join(info.get("texts", [])[:80]).lower()
+    duration = float(info.get("duration", 0.0) or 0.0)
+    segments = int(info.get("segments", 0) or 0)
+    words = int(info.get("words", 0) or 0)
+    avg_words = words / max(1, segments)
+
+    instructor_cues = [
+        "let's", "we will", "i will show", "you can see", "for example", "remember",
+        "this means", "you need to", "quantum", "round robin", "feedback", "queue",
+        "chúng ta", "các bạn", "ví dụ", "thầy", "cô", "mình sẽ", "ta sẽ", "bài này",
+        "đầu tiên", "tiếp theo", "như vậy", "deadline", "lab",
+    ]
+    student_cues = [
+        "dạ", "có ạ", "em", "yes", "no", "okay", "sorry", "i have a question",
+        "can you repeat", "chưa hiểu", "hỏi", "không nghe", "không thấy",
+    ]
+    instructor_score = sum(1 for cue in instructor_cues if cue in texts)
+    student_score = sum(1 for cue in student_cues if cue in texts)
+
+    if is_lead_speaker and (duration >= 60 or segments >= 12 or instructor_score >= student_score):
+        return "instructor"
+    if avg_words <= 6 and student_score > 0 and duration < 120:
+        return "student"
+    if instructor_score >= student_score + 1 and (duration >= 30 or avg_words >= 8):
+        return "instructor"
+    if student_score > instructor_score:
         return "student"
     return "participant"
