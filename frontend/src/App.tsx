@@ -48,6 +48,21 @@ function formatAblationMode(mode: string) {
   return labels[mode] || mode.replace(/_/g, ' ');
 }
 
+function formatMetricValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return 'n/a';
+  if (typeof value === 'boolean') return value ? 'yes' : 'no';
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)));
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    if (record.status || record.provider) {
+      return [record.provider, record.status].filter(Boolean).join(' / ');
+    }
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
 function cleanMarkdownText(text: string) {
   return (text || "")
     .replace(/\*\*(.*?)\*\*/g, "$1")
@@ -1575,7 +1590,7 @@ export default function App() {
                     {Object.entries(evaluationSummary?.metrics || {}).map(([key, value]) => (
                       <div key={key} className="metric-tile">
                         <span>{key.replace(/_/g, ' ')}</span>
-                        <strong>{String(value)}</strong>
+                        <strong>{formatMetricValue(value)}</strong>
                       </div>
                     ))}
                   </div>

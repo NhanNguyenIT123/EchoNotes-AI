@@ -6,16 +6,31 @@ from typing import List, Dict, Any, Generator
 from app.config import OLLAMA_API_URL, OLLAMA_DEFAULT_MODEL, OLLAMA_FALLBACK_MODEL
 from app.utils.corrector import TECH_VOCABULARY
 from app.utils.topic_segmentation import build_semantic_topic_blocks
+from app.utils.vlm import looks_like_vision_model
+from app.utils.text_safety import (
+    contains_cjk,
+    has_substantial_cjk,
+    normalize_cjk_artifacts,
+    sanitize_cjk_output,
+    strip_cjk_lines,
+)
 
-def contains_cjk(text: str) -> bool:
-    return bool(re.search(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", text or ""))
 
-def strip_cjk_lines(text: str) -> str:
-    lines = []
-    for line in (text or "").splitlines():
-        if not contains_cjk(line):
-            lines.append(line)
-    return "\n".join(lines).strip()
+def resolve_text_synthesis_model(model_name: str) -> tuple[str, str | None]:
+    """
+    Vision models can read images, but they are often poor long-form note writers.
+    Prefer an installed text model for report synthesis while keeping VLM for keyframes.
+    """
+    if not looks_like_vision_model(model_name):
+        return model_name, None
+    installed = get_installed_ollama_models()
+    for preferred in [OLLAMA_DEFAULT_MODEL, "qwen2.5:7b-instruct", "llama3:latest", OLLAMA_FALLBACK_MODEL]:
+        if preferred in installed and not looks_like_vision_model(preferred):
+            return preferred, model_name
+    for candidate in installed:
+        if not looks_like_vision_model(candidate):
+            return candidate, model_name
+    return model_name, None
 
 def infer_note_language(segments: List[Dict[str, Any]]) -> str:
     for seg in segments or []:
@@ -607,6 +622,7 @@ def generate_smart_notes_stream(
     Streams the structured AI Smart Notes response in real-time, slide-by-slide,
     providing highly robust, detailed and fast compilation without timeouts or small LLM looping.
     """
+    model_name, replaced_vision_model = resolve_text_synthesis_model(model_name)
     aligned_data = align_content_by_slides(slides, segments)
     note_language = infer_note_language(segments)
 
@@ -617,6 +633,8 @@ def generate_smart_notes_stream(
 
         yield "# EchoNotes AI - NLP Smart Notes\n\n"
         yield f"*Transcript-first synthesis using local model: `{model_name}`*\n\n"
+        if replaced_vision_model:
+            yield f"*Text synthesis model auto-switched from image model `{replaced_vision_model}` to `{model_name}`.*\n\n"
         if top_keywords:
             yield "**Detected keywords:** " + ", ".join(f"`{kw}`" for kw in top_keywords) + "\n\n"
         yield "---\n\n"
@@ -667,17 +685,17 @@ def generate_smart_notes_stream(
                     if not line:
                         continue
                     response_chunk = json.loads(line.decode("utf-8"))
-                    response_text = response_chunk.get("message", {}).get("content", "")
+                    response_text = normalize_cjk_artifacts(response_chunk.get("message", {}).get("content", ""))
                     block_text += response_text
-                    if contains_cjk(block_text):
-                        yield "\n\n*[Model output contained unsupported CJK text and was discarded for this block. Using offline fallback.]*\n\n"
+                    if has_substantial_cjk(block_text):
+                        yield "\n\n*[Model output contained substantial unsupported CJK text and was replaced with offline fallback.]*\n\n"
                         for bullet in summarize_chunk_offline(chunk["text"], max_sentences=4):
                             yield f"- {bullet}\n"
                         break
                     if len(block_text) > 2200:
                         yield "\n\n*[Output limit reached for this topic block.]*\n"
                         break
-                    yield response_text
+                    yield sanitize_cjk_output(response_text) or ""
                 yield "\n\n---\n\n"
             except Exception:
                 yield "\n\n*[Ollama timed out. Using offline NLP fallback.]*\n\n"
@@ -688,6 +706,8 @@ def generate_smart_notes_stream(
 
     yield "# EchoNotes AI - Smart Lecture Notes\n\n"
     yield f"*Generated with local AI model: `{model_name}`*\n\n"
+    if replaced_vision_model:
+        yield f"*Text synthesis model auto-switched from image model `{replaced_vision_model}` to `{model_name}`. Image understanding still uses the selected vision model during keyframe analysis.*\n\n"
     yield "---\n\n"
     
     total_slides = len(aligned_data)
@@ -858,9 +878,14 @@ def generate_smart_notes_stream(
                     if chunk.get("done", False):
                         break
 
-            cleaned_slide_text = strip_cjk_lines(slide_text)
-            if not cleaned_slide_text.strip() or contains_cjk(cleaned_slide_text):
-                yield "*Model output was discarded because it contained unsupported Chinese text. Using grounded fallback notes instead.*\n\n"
+            cleaned_slide_text = sanitize_cjk_output(slide_text)
+            if not cleaned_slide_text.strip():
+                warning = (
+                    "*Model output contained substantial unsupported CJK text and was replaced with grounded fallback notes.*\n\n"
+                    if has_substantial_cjk(slide_text)
+                    else "*Model output was empty after safety cleanup. Using grounded fallback notes instead.*\n\n"
+                )
+                yield warning
                 if dense_speech:
                     for bullet in summarize_chunk_offline(item["speech_text"], max_sentences=4):
                         yield f"- {bullet}\n"

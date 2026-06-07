@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 import requests
 
 from app.config import OLLAMA_API_URL
+from app.utils.text_safety import sanitize_cjk_output
 
 
 VISION_MODEL_HINTS = ("llava", "bakllava", "moondream", "minicpm-v", "qwen2-vl", "qwen2.5vl", "qwen-vl")
@@ -67,7 +68,7 @@ def analyze_keyframe_with_ollama_vlm(
     response = requests.post(f"{OLLAMA_API_URL}/chat", json=payload, timeout=(10, timeout_sec))
     if response.status_code != 200:
         raise RuntimeError(f"Ollama vision model returned HTTP {response.status_code}: {response.text[:300]}")
-    return (response.json().get("message", {}).get("content") or "").strip()
+    return sanitize_cjk_output(response.json().get("message", {}).get("content") or "")
 
 
 def enrich_keyframes_with_vlm(
