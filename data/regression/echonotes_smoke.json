@@ -1,78 +1,502 @@
 {
-  "name": "EchoNotes AI smoke regression set",
-  "version": 1,
-  "purpose": "Small local benchmark for checking ASR, topic segmentation, retrieval citations, and visual-context grounding after code changes.",
+  "name": "EchoNotes active lecture regression set",
+  "created_at": "2026-06-07T13:15:27.724948+00:00",
+  "active_project_id": "946bb2b2-5756-4458-a362-09aa3826e7f9",
+  "active_video_name": "Meeting in General-20260424_081430-Meeting Recording.mp4",
+  "source": "generated_from_current_lecture",
+  "coverage": {
+    "transcript_segments": 851,
+    "topic_blocks": 47,
+    "visual_keyframes": 44,
+    "cases": 12
+  },
   "cases": [
     {
-      "id": "business-central-order-flow",
-      "description": "Business Central training call about confirming orders converted from quotations.",
+      "id": "topic-1",
+      "title": "Processor / Time / Multiple / System",
+      "time_range": {
+        "start": 53.96,
+        "end": 409.33,
+        "label": "00:00:53 - 00:06:49"
+      },
       "expected_topics": [
-        "confirm SO and BO from SQ and PQ",
-        "convert quotation to order",
-        "link order lines to source records"
+        "Processor / Time / Multiple / System"
       ],
       "expected_terms": [
-        "SO",
-        "BO",
-        "SQ",
-        "PQ",
-        "Business Central"
+        "processor",
+        "time",
+        "multiple",
+        "system",
+        "they",
+        "scheduling",
+        "process",
+        "mean"
       ],
-      "expected_timestamp_windows": [
-        {
-          "label": "SO/BO confirmation setup",
-          "start_sec": 0,
-          "end_sec": 130
-        }
+      "retrieval_queries": [
+        "Explain processor",
+        "Find exact moment about processor",
+        "Generate quiz for Processor / Time / Multiple / System"
       ],
-      "grounded_questions": [
+      "visual_expectations": [
         {
-          "mode": "find_moment",
-          "question": "Find the moment where the speaker explains confirming SO and BO from SQ and PQ.",
-          "must_return_timestamp": true
+          "timestamp": "00:00:59",
+          "timestamp_sec": 59.62500621091054,
+          "has_ocr": false,
+          "has_image_understanding": true
         },
         {
-          "mode": "explain",
-          "question": "What does the lecture say about converting quotation records into orders?",
-          "must_return_citation": true
+          "timestamp": "00:03:18",
+          "timestamp_sec": 198.75002070303515,
+          "has_ocr": false,
+          "has_image_understanding": true
+        },
+        {
+          "timestamp": "00:05:37",
+          "timestamp_sec": 337.87503519515974,
+          "has_ocr": false,
+          "has_image_understanding": true
         }
-      ]
+      ],
+      "reference_excerpt": "So the idea is operating system allow multiple processors to run, right? And they also manage multiple kind of resource because the processor is actually unlimited. I mean the number of processes it's not limit where the resource actually limit right then Then processor have to provide the resource in the execution time, including the processor time. Right? Processor time. So operating system have to allocate the resource, I mean, the time of processor based on the schedule. Right? So, for example, one process, one time slot, and then they finish. They can try another time slot. We will have on the computer right now, one or multiple processor. Multiple processor can be one processor only but can be more than one. one right so we have uniprocessor scheduling and also multiprocessors scheduling right but within this course we only focus on uniprocessor scheduling right multiprocessor sche",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
     },
     {
-      "id": "al-table-relations",
-      "description": "AL/Business Central coding lecture about table relations, lookup fields, and linked tables.",
+      "id": "topic-2",
+      "title": "Time / Process / Processor / Slot",
+      "time_range": {
+        "start": 412.03,
+        "end": 501.65,
+        "label": "00:06:52 - 00:08:21"
+      },
       "expected_topics": [
-        "table relation",
-        "lookup field",
-        "payment terms",
-        "vendor relation"
+        "Time / Process / Processor / Slot"
       ],
       "expected_terms": [
-        "TableRelation",
-        "Vendor",
-        "Payment Terms",
-        "field",
-        "line"
+        "time",
+        "process",
+        "processor",
+        "slot",
+        "fairly",
+        "call",
+        "multiple",
+        "problem"
       ],
-      "expected_timestamp_windows": [
+      "retrieval_queries": [
+        "Explain time",
+        "Find exact moment about time",
+        "Generate quiz for Time / Process / Processor / Slot"
+      ],
+      "visual_expectations": [],
+      "reference_excerpt": "time slot among process processors to make sure that our process have a time slot slot to work processor we call this one fairly the fact is problem with fairly right from the how fair we consider in this case right so we need to have to provide multiple policy because there are not only one or two criterias we have multiple criteria here right the fairly also little problem with preventing the starvation of a process mean that one process actually wait for long time to get time slot to work with processor right we call this one starvation another scheduling objective is to use processor efficiently when that you want to maximize the processor utilization have a low overhead of a head in that time for swap right pay for",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-3",
+      "title": "Another / Process / Problem / Memory",
+      "time_range": {
+        "start": 501.65,
+        "end": 628.68,
+        "label": "00:08:21 - 00:10:28"
+      },
+      "expected_topics": [
+        "Another / Process / Problem / Memory"
+      ],
+      "expected_terms": [
+        "another",
+        "process",
+        "problem",
+        "memory",
+        "swapping",
+        "enough",
+        "execute",
+        "happen"
+      ],
+      "retrieval_queries": [
+        "Explain another",
+        "Find exact moment about another",
+        "Generate quiz for Another / Process / Problem / Memory"
+      ],
+      "visual_expectations": [],
+      "reference_excerpt": "for address this other problem called by the lacking of the resource, so memory resource specifically right when you don't have enough memory then but you still want to run more processes in the memory right and the problem that when one process ready to work processor user number payload into the frame actually not enough pay for happen right before happened then operating system need to switch to another another process again another process face the problem with the payphone and they split to another process and this problem actually actually continuous so operating system actually always work with the swapping swapping and processor actually not doing the real thing right the only way to execute something but every time they want to execute then swapping happen right this is actually high overhead another objective be prioritizing the process when necessary, right? So some processes ",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-4",
+      "title": "Scheduling / Process / Decide / Memory",
+      "time_range": {
+        "start": 631.22,
+        "end": 761.6,
+        "label": "00:10:31 - 00:12:41"
+      },
+      "expected_topics": [
+        "Scheduling / Process / Decide / Memory"
+      ],
+      "expected_terms": [
+        "scheduling",
+        "process",
+        "decide",
+        "memory",
+        "operating",
+        "system",
+        "they",
+        "long-term"
+      ],
+      "retrieval_queries": [
+        "Explain scheduling",
+        "Find exact moment about scheduling",
+        "Generate quiz for Scheduling / Process / Decide / Memory"
+      ],
+      "visual_expectations": [
         {
-          "label": "table relation explanation",
-          "start_sec": 0,
-          "end_sec": 180
+          "timestamp": "00:11:05",
+          "timestamp_sec": 665.8125693551677,
+          "has_ocr": false,
+          "has_image_understanding": true
         }
       ],
-      "grounded_questions": [
+      "reference_excerpt": "So they might need to have more time slots and more time slots to work with processor to meet real-time deadline, right. This I mean multiple real-term allocation, communication right like a interactive process right so far you have learned two types of scheduling right among four type of scheduling over here right we have a long term scheduling long-term scheduling to operating system you long-terms scheduling to decide to decide decide process to be executed with that when the process start right when the program start operating system will check the resource if they have enough result available result I mean to run one more process then they add the person into the ready queue this is a long-term scheduling middle term scheduling the operating system we decide to add the process into domain memory memory right main memory so this is actually the operating system consider memory resour",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-5",
+      "title": "Io / Queue / Scheduling / Process",
+      "time_range": {
+        "start": 761.6,
+        "end": 871.67,
+        "label": "00:12:41 - 00:14:31"
+      },
+      "expected_topics": [
+        "Io / Queue / Scheduling / Process"
+      ],
+      "expected_terms": [
+        "io",
+        "queue",
+        "scheduling",
+        "process",
+        "processor",
+        "ready",
+        "request",
+        "available"
+      ],
+      "retrieval_queries": [
+        "Explain io",
+        "Find exact moment about io",
+        "Generate quiz for Io / Queue / Scheduling / Process"
+      ],
+      "visual_expectations": [],
+      "reference_excerpt": "scheduling actually affects on the multi programming level that we discussed before we have another kind of scheduling we call IO scheduling like our scheduling usually to to decide which process spending IO request should be handled by available IO device. So when you read the IO, we also have to schedule for the reading input-output data from multiple IO devices. The short term scheduling that we studied today, operating system design with available process will be executed by processor right mean that we have a ready queue right we have already queue in the ready queue we have multiple processes ready to run with the process processor all right which one we choose right which is it in the radio queue right didn't really kill but the way we choose actually not like a q right so you think like the process stop of the queue will work with processor is right right it's right but remember",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-6",
+      "title": "Memory / Process / Suspend / Ready",
+      "time_range": {
+        "start": 901.38,
+        "end": 1164.9,
+        "label": "00:15:01 - 00:19:24"
+      },
+      "expected_topics": [
+        "Memory / Process / Suspend / Ready"
+      ],
+      "expected_terms": [
+        "memory",
+        "process",
+        "suspend",
+        "ready",
+        "main",
+        "blockk",
+        "scheduling",
+        "term"
+      ],
+      "retrieval_queries": [
+        "Explain memory",
+        "Find exact moment about memory",
+        "Generate quiz for Memory / Process / Suspend / Ready"
+      ],
+      "visual_expectations": [
         {
-          "mode": "explain",
-          "question": "Explain table relations in the Business Central coding lecture.",
-          "must_return_citation": true
+          "timestamp": "00:15:34",
+          "timestamp_sec": 934.1250973042652,
+          "has_ocr": false,
+          "has_image_understanding": true
+        }
+      ],
+      "reference_excerpt": "the seven-state model from chapter three right seven state model on chapter three and this model actually explain about long-term scheduling and middle term scheduling so when new process The process actually accept to the ready or already suspend. Look at the off-figure, new process, accept to ready or suspend. This is because of long term scheduling. Operating system first check the resource, available resource and they accepting to ready if the resource is okay to run one more process. If we lack up main memory. except the process into the ready suspend ready here mean that the process ready to run but we don't have a enough memory to store the process then process temporary stay in the virtual memory right virtual memory we call this one suspend then from 30 suspend to ready and blockk suspend suspend to blockk this actually middle term scheduling happen right suspend stay actually r",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-7",
+      "title": "Queue / Blockk / Scheduling / Ready",
+      "time_range": {
+        "start": 1164.9,
+        "end": 1391.12,
+        "label": "00:19:24 - 00:23:11"
+      },
+      "expected_topics": [
+        "Queue / Blockk / Scheduling / Ready"
+      ],
+      "expected_terms": [
+        "queue",
+        "blockk",
+        "scheduling",
+        "ready",
+        "process",
+        "suspend",
+        "happen",
+        "job"
+      ],
+      "retrieval_queries": [
+        "Explain queue",
+        "Find exact moment about queue",
+        "Generate quiz for Queue / Blockk / Scheduling / Ready"
+      ],
+      "visual_expectations": [
+        {
+          "timestamp": "00:20:52",
+          "timestamp_sec": 1252.1251304291213,
+          "has_ocr": false,
+          "has_image_understanding": true
+        }
+      ],
+      "reference_excerpt": "that we need to schedule the ready process to run with processor we call this one short-term scheduling so if you look at the process station addition now you understand where actually long term scheduling middle term scheduling and short-time scheduling right another queuing diagram here so we have long-term scheduling when the batch job or interactive user interesting the user actually interactive job right so we have multiple kind of job over here but chop will lie up into the queue but interact deep job require fast response so they don't have to get into the cure long-term scheduling will decide at that point right and middle term scheduling apps actually happen at the ready suspend queue over here right blockk suspend blockk suspend queue over here when we decide to bring the multiple process from this queue into the ready queue again or from the blockk queue to the blockk suspend ",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-8",
+      "title": "First / Come / Before / Control",
+      "time_range": {
+        "start": 1391.12,
+        "end": 1571.4,
+        "label": "00:23:11 - 00:26:11"
+      },
+      "expected_topics": [
+        "First / Come / Before / Control"
+      ],
+      "expected_terms": [
+        "first",
+        "come",
+        "before",
+        "control",
+        "degree",
+        "multi-programming",
+        "multiple",
+        "other"
+      ],
+      "retrieval_queries": [
+        "Explain first",
+        "Find exact moment about first",
+        "Generate quiz for First / Come / Before / Control"
+      ],
+      "visual_expectations": [
+        {
+          "timestamp": "00:23:11",
+          "timestamp_sec": 1391.250144921246,
+          "has_ocr": false,
+          "has_image_understanding": true
+        }
+      ],
+      "reference_excerpt": "scheduling we decide which program to be admitted to the system for processing right the easiest policy here can be the first come first serve right so you go to the queue right first come versa but then it depends on multiple other criteria and i told you before For example, priority, my priority or I.O requirement or expected execution time, right? So first come, first serve is only one policy. We have multiple other policies to be considered. They're sure you can, if you have a presentation, you can leave long-term scheduling actually related to the degree of multi-programming. I explained before that because more they control the number of processes executed in the system, the degree of multi-programming is about to control the",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-9",
+      "title": "Process / System / Number / Processes",
+      "time_range": {
+        "start": 1571.4,
+        "end": 1678.66,
+        "label": "00:26:11 - 00:27:58"
+      },
+      "expected_topics": [
+        "Process / System / Number / Processes"
+      ],
+      "expected_terms": [
+        "process",
+        "system",
+        "number",
+        "processes",
+        "time",
+        "too",
+        "different",
+        "easy"
+      ],
+      "retrieval_queries": [
+        "Explain process",
+        "Find exact moment about process",
+        "Generate quiz for Process / System / Number / Processes"
+      ],
+      "visual_expectations": [],
+      "reference_excerpt": "number of process running in the system. You remember the bell shape that I explained last time? If we run fewer processes process in the system in the computer then we don't maximize the processor utilization right but if we run too many processes like too many processors then we have problem with the trashing the trushing mean that we don' t use the processor efficiently too right only when we maintain reasonable number of the processes in a system then we can achieve the high degree of multi programming how to control the number here it's actually not easy right easy because our process is actually different inside in time execution in the criteria in the IO requirement very different they are not the same right if we learn more process in the system that smaller percentage of the time at process to be executed as obvious then you have to like think a little bit about",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-10",
+      "title": "Main / Memory / Process / Running",
+      "time_range": {
+        "start": 1679.38,
+        "end": 1874.72,
+        "label": "00:27:59 - 00:31:14"
+      },
+      "expected_topics": [
+        "Main / Memory / Process / Running"
+      ],
+      "expected_terms": [
+        "main",
+        "memory",
+        "process",
+        "running",
+        "scheduler",
+        "term",
+        "they",
+        "degree"
+      ],
+      "retrieval_queries": [
+        "Explain main",
+        "Find exact moment about main",
+        "Generate quiz for Main / Memory / Process / Running"
+      ],
+      "visual_expectations": [
+        {
+          "timestamp": "00:28:39",
+          "timestamp_sec": 1719.187679081254,
+          "has_ocr": false,
+          "has_image_understanding": true
         },
         {
-          "mode": "compare_visual",
-          "question": "Compare what the slide shows with the transcript around table relations.",
-          "must_return_citation": true
+          "timestamp": "00:29:48",
+          "timestamp_sec": 1788.7501863273162,
+          "has_ocr": false,
+          "has_image_understanding": true
         }
-      ]
+      ],
+      "reference_excerpt": "running one more processes right one more process in the middle term scheduling it's part of swapping and i explained right swapping swapping in decision based on the need to manage the degree of the multi-programming right so operating system will decide to bring process into the main memory or not right if they stay in the virtual memory they are not running actually right they're waiting for event do something now not really run with processor so we use the middle term scheduling to actually control the degree of programming too. Degree of multi-programming too, right? We accept the process in the ready queue or ready suspend already but we don't let them to run, right? The stay in suspend queue means that part of the process is not in the main memory yet so the process has to wait there. For short term scheduling, for short term program running on the top of the main processor you kn",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-11",
+      "title": "Queue / Time / Blockk / Process",
+      "time_range": {
+        "start": 1876.29,
+        "end": 1988.58,
+        "label": "00:31:16 - 00:33:08"
+      },
+      "expected_topics": [
+        "Queue / Time / Blockk / Process"
+      ],
+      "expected_terms": [
+        "queue",
+        "time",
+        "blockk",
+        "process",
+        "call",
+        "event",
+        "interrupt",
+        "work"
+      ],
+      "retrieval_queries": [
+        "Explain queue",
+        "Find exact moment about queue",
+        "Generate quiz for Queue / Time / Blockk / Process"
+      ],
+      "visual_expectations": [],
+      "reference_excerpt": "that it bring the processors from the radio queue to work for processor and if if if the process processes finish the time slot dispatcher will trigger the trigger the event right trigger event multiple events can be happen here for example if the process work normally from the beginning of the time slot until you finish the time slots then timeout right we call this one blockk interrupt right blockk is dropping time out then when the blockk interrupt happened then they call a routing to actually switch another process to go to the processor right and put the current processing into the into any queue can be ready queue can be whatever queue right blockk interrupt sometime during execution during the time slot then process possibly request for i o then we call the io interrupt right and i observe to to bring the process into the blockk queue right of course blockk queue and wait there an",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
+    },
+    {
+      "id": "topic-12",
+      "title": "Requirement / Scheduling / Requirements / System",
+      "time_range": {
+        "start": 1988.72,
+        "end": 2102.81,
+        "label": "00:33:08 - 00:35:02"
+      },
+      "expected_topics": [
+        "Requirement / Scheduling / Requirements / System"
+      ],
+      "expected_terms": [
+        "requirement",
+        "scheduling",
+        "requirements",
+        "system",
+        "behavior",
+        "certain",
+        "criteria",
+        "first"
+      ],
+      "retrieval_queries": [
+        "Explain requirement",
+        "Find exact moment about requirement",
+        "Generate quiz for Requirement / Scheduling / Requirements / System"
+      ],
+      "visual_expectations": [
+        {
+          "timestamp": "00:33:37",
+          "timestamp_sec": 2017.3127101358066,
+          "has_ocr": false,
+          "has_image_understanding": false
+        },
+        {
+          "timestamp": "00:34:07",
+          "timestamp_sec": 2047.125213241262,
+          "has_ocr": false,
+          "has_image_understanding": false
+        },
+        {
+          "timestamp": "00:34:46",
+          "timestamp_sec": 2086.875217381869,
+          "has_ocr": false,
+          "has_image_understanding": false
+        }
+      ],
+      "reference_excerpt": "for particular special routine special routine here mean that interrupt for process to move to the proper of queue so we move to scheduling algorithm main objective for the short-term scheduling actually to allocate processor time to the optimize certain aspect of system behavior the fact that way we schedule processor time for the process it's not like a first come first serve right but you have to satisfy with multiple requirements certain aspects of the system behavior mean that here means that the requirement multiple requirements Requirement here means that the system requirement or user requirement, right? And all requirements considered as a set of criteria need to be evaluated before using the scheduling policies. There are two groups of the scheduling criteria, right, from the user perspective and also",
+      "acceptance": {
+        "must_return_timestamp": true,
+        "must_include_at_least_one_expected_term": true,
+        "must_stay_grounded": true
+      }
     }
   ]
 }
