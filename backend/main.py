@@ -767,6 +767,8 @@ def load_project(project_id: str):
         elif "image_path" in slide and slide["image_path"]:
             slide["image_path"] = Path(slide["image_path"]).name
 
+    payload["slides"] = slides
+
     with open(enriched_cache_path, "w", encoding="utf-8") as f:
         json.dump(transcript, f, ensure_ascii=False, indent=2)
     with open(topic_blocks_cache_path, "w", encoding="utf-8") as f:
