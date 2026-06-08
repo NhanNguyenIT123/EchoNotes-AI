@@ -191,7 +191,12 @@ function SimpleMarkdown({ markdown }: { markdown: string }) {
     const imgRegex = /^\s*!\[([^\]]*)\]\(([^)]+)\)\s*$/;
     const imgMatch = line.match(imgRegex);
     if (imgMatch) {
-      const imageSrc = imgMatch[2].trim();
+      let imageSrc = imgMatch[2].trim();
+      if (!imageSrc.startsWith('http') && !imageSrc.startsWith('data:')) {
+        const parts = imageSrc.split(/[/\\]/);
+        const filename = parts[parts.length - 1];
+        imageSrc = `${API_BASE}/keyframes/${filename}`;
+      }
       elements.push(
         <img 
           key={`img-${index}`} 
@@ -1523,7 +1528,7 @@ export default function App() {
                         <div className="keyframe-img-box">
                           {slide.image_path ? (
                             <img 
-                              src={slide.image_path.startsWith('http') ? slide.image_path : `${API_BASE}/keyframes/${slide.image_path}`} 
+                              src={slide.image_path.startsWith('http') ? slide.image_path : `${API_BASE}/keyframes/${slide.image_path.split(/[/\\]/).pop()}`} 
                               alt={`Keyframe ${idx}`}
                               className="keyframe-img"
                               onError={(e) => { e.currentTarget.style.display = 'none'; }}

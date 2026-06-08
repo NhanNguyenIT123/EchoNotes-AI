@@ -153,9 +153,9 @@ def markdown_for_client(markdown_text: str) -> str:
         if target.startswith("data:image/") or target.startswith("http://") or target.startswith("https://"):
             return f"![{alt_text}]({target})"
 
-        image_path = Path(target)
-        if image_path.exists() and image_path.is_file():
-            return f"![{alt_text}](http://127.0.0.1:8000/api/keyframes/{image_path.name})"
+        filename = re.split(r'[/\\]', target)[-1]
+        if filename:
+            return f"![{alt_text}](http://127.0.0.1:8000/api/keyframes/{filename})"
 
         return ""
 
@@ -727,7 +727,7 @@ def get_results():
             if slide.get("image_url"):
                 slide["image_path"] = slide["image_url"]
             elif "image_path" in slide and slide["image_path"]:
-                slide["image_path"] = Path(slide["image_path"]).name
+                slide["image_path"] = re.split(r'[/\\]', slide["image_path"])[-1]
                 
         return {"transcript": transcript, "slides": slides, "topic_blocks": topic_blocks}
     except Exception as e:
@@ -765,7 +765,7 @@ def load_project(project_id: str):
         if slide.get("image_url"):
             slide["image_path"] = slide["image_url"]
         elif "image_path" in slide and slide["image_path"]:
-            slide["image_path"] = Path(slide["image_path"]).name
+            slide["image_path"] = re.split(r'[/\\]', slide["image_path"])[-1]
 
     payload["slides"] = slides
 
@@ -1496,24 +1496,44 @@ def sync_current_artifacts():
             artifacts[object_name] = url
     return {"provider": os.getenv("ECHONOTES_STORAGE_PROVIDER", "local"), "artifacts": artifacts}
 
+def resolve_video_path(path_or_name: Optional[str]) -> Optional[Path]:
+    if not path_or_name:
+        return None
+    
+    # Extract filename robustly (handling both Windows and Linux separators)
+    filename = re.split(r'[/\\]', path_or_name)[-1]
+    if not filename:
+        return None
+        
+    candidates = [
+        RAW_DIR / filename,
+        DATA_DIR / "cloud_artifacts" / "raw" / filename,
+        DATA_DIR / "cloud_artifacts" / filename,
+    ]
+    
+    storage_dir_env = os.getenv("ECHONOTES_LOCAL_STORAGE_DIR")
+    if storage_dir_env:
+        storage_path = Path(storage_dir_env)
+        candidates.append(storage_path / "raw" / filename)
+        candidates.append(storage_path / filename)
+
+    for cand in candidates:
+        if cand.exists() and cand.is_file():
+            return cand
+            
+    return None
+
+
 @app.get("/api/video")
 def get_video_stream(request: Request, v: Optional[str] = None):
     """Streams the active video file using FastAPI's native FileResponse with automatic byte-range support."""
-    video_path_str = None
-    if v:
-        # Resolve via query param, preventing directory traversal
-        clean_v = Path(v).name
-        candidate = RAW_DIR / clean_v
-        if candidate.exists() and candidate.is_file():
-            video_path_str = str(candidate)
+    video_path = resolve_video_path(v)
+    if not video_path:
+        video_path = resolve_video_path(state.get("active_video_path"))
 
-    if not video_path_str:
-        video_path_str = state.get("active_video_path")
+    if not video_path:
+        raise HTTPException(status_code=404, detail="No video file loaded in session or file not found on disk.")
 
-    if not video_path_str or not Path(video_path_str).exists():
-        raise HTTPException(status_code=404, detail="No video file loaded in session.")
-
-    video_path = Path(video_path_str)
     media_type = _video_media_type(video_path)
 
     return FileResponse(
@@ -1540,10 +1560,9 @@ def _video_media_type(path: Path) -> str:
 @app.head("/api/video")
 def head_video_stream():
     """Returns video metadata headers for browsers that probe before playback."""
-    video_path_str = state["active_video_path"]
-    if not video_path_str or not Path(video_path_str).exists():
-        raise HTTPException(status_code=404, detail="No video file loaded in session.")
-    video_path = Path(video_path_str)
+    video_path = resolve_video_path(state.get("active_video_path"))
+    if not video_path:
+        raise HTTPException(status_code=404, detail="No video file loaded in session or file not found on disk.")
     return Response(
         status_code=200,
         media_type=_video_media_type(video_path),
@@ -1554,12 +1573,19 @@ def head_video_stream():
         },
     )
 
+
 @app.get("/api/keyframes/{filename}")
 def serve_keyframe_image(filename: str):
     """Serves slide screenshot files from frame extraction folders."""
-    img_path = FRAMES_DIR / filename
+    clean_name = Path(filename).name
+    img_path = FRAMES_DIR / clean_name
     if not img_path.exists():
-        # Fallback to check nested absolute path configurations
+        fallback_path = DATA_DIR / "cloud_artifacts" / "keyframes" / clean_name
+        storage_dir_env = os.getenv("ECHONOTES_LOCAL_STORAGE_DIR")
+        if storage_dir_env:
+            fallback_path = Path(storage_dir_env) / "keyframes" / clean_name
+        if fallback_path.exists():
+            return FileResponse(str(fallback_path))
         raise HTTPException(status_code=404, detail="Keyframe image not found on disk.")
     return FileResponse(str(img_path))
 
