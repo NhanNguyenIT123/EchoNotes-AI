@@ -59,7 +59,7 @@ services:
     container_name: echonotes-worker
     restart: unless-stopped
     profiles: ["full"]
-    command: ["python", "backend/worker.py"]
+    command: ["python", "-m", "backend.worker"]
     environment:
       ECHONOTES_DATABASE_URL: postgresql+psycopg://echonotes:echonotes@postgres:5432/echonotes
       ECHONOTES_REDIS_URL: redis://redis:6379/0

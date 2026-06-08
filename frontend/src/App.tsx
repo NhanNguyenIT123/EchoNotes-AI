@@ -779,7 +779,7 @@ export default function App() {
 
   const activeVideoSrc = systemStatus.active_video_name
     ? `${API_BASE}/video?v=${encodeURIComponent(systemStatus.active_video_name)}`
-    : '';
+    : undefined;
 
   useEffect(() => {
     if (activeTab !== 'playback' || pendingSeekTime === null || !videoRef.current) return;
