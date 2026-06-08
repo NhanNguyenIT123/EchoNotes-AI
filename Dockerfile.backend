@@ -6,8 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git && r
 
 COPY requirements.txt requirements-prod.txt ./
 ARG INSTALL_PROD_DEPS=true
-RUN pip install --no-cache-dir -r requirements.txt && \
-    if [ "$INSTALL_PROD_DEPS" = "true" ]; then pip install --no-cache-dir -r requirements-prod.txt; fi
+RUN pip install --no-cache-dir --default-timeout=1000 --retries=10 -r requirements.txt && \
+    if [ "$INSTALL_PROD_DEPS" = "true" ]; then pip install --no-cache-dir --default-timeout=1000 --retries=10 -r requirements-prod.txt; fi
 
 COPY app ./app
 COPY backend ./backend
