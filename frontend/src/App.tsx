@@ -85,13 +85,22 @@ function cleanMarkdownText(text: string) {
 }
 
 function renderInlineMarkdown(text: string) {
-  const parts = (text || "").split(/(\*\*.*?\*\*|`.*?`)/g).filter(Boolean);
+  const parts = (text || "").split(/(\*\*.*?\*\*|__.*?__|`.*?`|\*.*?\*|_[^_]+_)/g).filter(Boolean);
   return parts.map((part, idx) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return <strong key={idx} className="inline-markdown-bold">{part.slice(2, -2)}</strong>;
     }
+    if (part.startsWith("__") && part.endsWith("__")) {
+      return <strong key={idx} className="inline-markdown-bold">{part.slice(2, -2)}</strong>;
+    }
     if (part.startsWith("`") && part.endsWith("`")) {
       return <code key={idx} className="inline-markdown-code">{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith("*") && part.endsWith("*")) {
+      return <em key={idx} className="inline-markdown-italic" style={{ fontStyle: 'italic' }}>{part.slice(1, -1)}</em>;
+    }
+    if (part.startsWith("_") && part.endsWith("_")) {
+      return <em key={idx} className="inline-markdown-italic" style={{ fontStyle: 'italic' }}>{part.slice(1, -1)}</em>;
     }
     return <React.Fragment key={idx}>{part}</React.Fragment>;
   });
@@ -210,7 +219,7 @@ function SimpleMarkdown({ markdown }: { markdown: string }) {
       elements.push(<blockquote key={index} style={{ borderLeft: '3px solid var(--blue-normal)', paddingLeft: '1rem', color: 'var(--text-secondary)', margin: '1rem 0', fontStyle: 'italic' }}>{renderInlineMarkdown(line.substring(2))}</blockquote>);
     }
     // Bullets
-    else if (line.trim().startsWith('- ') || line.trim().startsWith('* ')) {
+    else if (line.trim().startsWith('- ') || line.trim().startsWith('* ') || line.trim().startsWith('+ ')) {
       elements.push(<li key={index} style={{ marginLeft: '1.5rem', marginTop: '0.25rem', marginBottom: '0.25rem' }}>{renderInlineMarkdown(line.trim().substring(2))}</li>);
     }
     // Divider
