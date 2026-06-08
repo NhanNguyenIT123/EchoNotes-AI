@@ -355,6 +355,13 @@ def run_pipeline_thread(
         for slide in slide_keyframes:
             if use_glossary and "ocr_text" in slide and slide["ocr_text"]:
                 slide["ocr_text"] = corrector.correct_text(slide["ocr_text"])
+            # Sync keyframe screenshots to cloud storage if enabled
+            if "image_path" in slide and slide["image_path"]:
+                img_path = Path(slide["image_path"])
+                if img_path.exists() and img_path.is_file():
+                    storage_url = sync_storage_artifact(img_path, f"keyframes/{img_path.name}")
+                    if storage_url and (storage_url.startswith("http://") or storage_url.startswith("https://") or storage_url.startswith("s3://")):
+                        slide["image_url"] = storage_url
             cleaned_slide_keyframes.append(slide)
 
         topic_blocks = build_semantic_topic_blocks(cleaned_enriched_segments)
@@ -528,6 +535,7 @@ def get_status():
         state["stage"] = active_job.get("stage", "Analysis complete")
         state["progress"] = 100
         state["last_metrics"] = active_job.get("metrics") or state.get("last_metrics", {})
+        load_initial_cache()
     elif active_job and active_job.get("status") == "error":
         state["status"] = "error"
         state["stage"] = active_job.get("stage", "Worker failed")
@@ -715,7 +723,9 @@ def get_results():
             
         # Clean paths for client consumption (avoid exposing full local windows paths)
         for slide in slides:
-            if "image_path" in slide and slide["image_path"]:
+            if slide.get("image_url"):
+                slide["image_path"] = slide["image_url"]
+            elif "image_path" in slide and slide["image_path"]:
                 slide["image_path"] = Path(slide["image_path"]).name
                 
         return {"transcript": transcript, "slides": slides, "topic_blocks": topic_blocks}
@@ -748,6 +758,13 @@ def load_project(project_id: str):
     topic_blocks = payload.get("topic_blocks") or build_semantic_topic_blocks(transcript)
     slides = payload.get("slides") or []
     report_markdown = payload.get("report_markdown") or ""
+
+    # Clean paths for client consumption (avoid exposing full local windows paths)
+    for slide in slides:
+        if slide.get("image_url"):
+            slide["image_path"] = slide["image_url"]
+        elif "image_path" in slide and slide["image_path"]:
+            slide["image_path"] = Path(slide["image_path"]).name
 
     with open(enriched_cache_path, "w", encoding="utf-8") as f:
         json.dump(transcript, f, ensure_ascii=False, indent=2)
@@ -831,6 +848,62 @@ def update_project_metadata_endpoint(project_id: str, metadata: ProjectMetadataU
     if not project:
         raise HTTPException(status_code=404, detail="Project not found.")
     return {"status": "saved", "project": project}
+
+
+class SpeakerMapRequest(BaseModel):
+    speaker_map: Dict[str, str]
+
+
+@app.post("/api/projects/{project_id}/speaker-map")
+def update_project_speaker_map_endpoint(project_id: str, payload: SpeakerMapRequest):
+    """Updates speaker names in the database and caches for the active project."""
+    global state
+    from app.db import get_project, db_session, LectureProject
+    from app.utils.topic_segmentation import build_semantic_topic_blocks
+
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found.")
+
+    # Update transcript_json in database
+    transcript = []
+    if project.transcript_json:
+        try:
+            transcript = json.loads(project.transcript_json)
+        except Exception:
+            transcript = []
+
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Project has no transcript data to map.")
+
+    for segment in transcript:
+        curr_speaker = segment.get("speaker")
+        if curr_speaker in payload.speaker_map:
+            segment["speaker"] = payload.speaker_map[curr_speaker]
+
+    # Re-save to DB
+    with db_session() as session:
+        db_project = session.get(LectureProject, project_id)
+        if db_project:
+            db_project.transcript_json = json.dumps(transcript, ensure_ascii=False)
+            # Regenerate topic blocks as speaker names might change structure
+            topic_blocks = build_semantic_topic_blocks(transcript)
+            db_project.topic_blocks_json = json.dumps(topic_blocks, ensure_ascii=False)
+            session.flush()
+
+    # If this is the active project, update active cache files too!
+    if state.get("active_project_id") == project_id:
+        try:
+            with open(enriched_cache_path, "w", encoding="utf-8") as f:
+                json.dump(transcript, f, ensure_ascii=False, indent=2)
+            # Rebuild topic blocks cache
+            topic_blocks = build_semantic_topic_blocks(transcript)
+            with open(topic_blocks_cache_path, "w", encoding="utf-8") as f:
+                json.dump(topic_blocks, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Error updating cache files on speaker map: {e}")
+
+    return {"status": "saved", "mapped_speakers": len(payload.speaker_map)}
 
 @app.get("/api/report/markdown")
 def get_report_markdown():
