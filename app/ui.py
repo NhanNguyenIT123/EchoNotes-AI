@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import os
 
 # Global UTF-8 encoding safeguard for Windows terminal prints
@@ -421,7 +421,8 @@ def answer_notes_question(question: str, notes: str, transcript_segments, model_
         "options": {"temperature": 0.1, "num_ctx": 4096, "num_predict": 320},
     }
     try:
-        res = requests.post("http://localhost:11434/api/chat", json=payload, timeout=(10, 180))
+        ollama_base = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        res = requests.post(f"{ollama_base}/api/chat", json=payload, timeout=(10, 180))
         if res.status_code == 200:
             answer = res.json().get("message", {}).get("content", "").strip()
             return answer or local_fallback

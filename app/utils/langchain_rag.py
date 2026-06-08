@@ -333,7 +333,7 @@ def answer_with_langchain_rag(
 
     llm = ChatOllama(
         model=model_name,
-        base_url="http://localhost:11434",
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         temperature=0.1,
         num_ctx=8192,
         num_predict=420,

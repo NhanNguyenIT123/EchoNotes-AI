@@ -63,6 +63,7 @@ SSIM_THRESHOLD = 0.94           # Slide transition occurs when SSIM drops below 
 FRAME_CHECK_INTERVAL = 2.0      # Sample one frame every 2.0 seconds (very lightweight)
 
 # Ollama API Configuration
-OLLAMA_API_URL = "http://localhost:11434/api"
-OLLAMA_DEFAULT_MODEL = "qwen2.5:1.5b-instruct"
-OLLAMA_FALLBACK_MODEL = "llama3:latest"
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", f"{OLLAMA_BASE_URL}/api")
+OLLAMA_DEFAULT_MODEL = os.getenv("OLLAMA_DEFAULT_MODEL", "qwen2.5:1.5b-instruct")
+OLLAMA_FALLBACK_MODEL = os.getenv("OLLAMA_FALLBACK_MODEL", "llama3:latest")
