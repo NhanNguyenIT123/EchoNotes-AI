@@ -3,7 +3,7 @@ import axios from 'axios';
 import { 
   Play, Video, FileText, Cpu, Eye, MessageSquare,
   RefreshCw, Upload, Sparkles, Download, FileDown, Search,
-  PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2, ChevronDown
+  PanelLeftClose, PanelLeftOpen, Maximize2, Minimize2, ChevronDown, Copy
 } from 'lucide-react';
 
 const API_BASE = 'http://127.0.0.1:8000/api';
@@ -738,6 +738,17 @@ export default function App() {
     window.open(`${API_BASE}/report/pdf`, '_blank');
   };
 
+  const handleCopyTranscript = () => {
+    if (transcript.length === 0) return;
+    const text = transcript.map(seg => {
+      const time = formatSecs(seg.start);
+      const speaker = seg.speaker && !String(seg.speaker).endsWith('_CUE') ? `${seg.speaker}: ` : '';
+      return `[${time}] ${speaker}${seg.text}`;
+    }).join('\n');
+    navigator.clipboard.writeText(text);
+    alert('Transcript copied to clipboard!');
+  };
+
   // --- PLAYBACK TIMELINE SEEKING ---
   const getSegmentEnd = (seg: any, idx: number, list: any[]) => {
     const start = Number(seg?.start) || 0;
@@ -1454,8 +1465,31 @@ export default function App() {
 
                 {/* Right: Timestamped Scrollable Transcript */}
                 <div className="transcript-panel">
-                  <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-                    Acoustic & Speech Timeline Navigator
+                  <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                      Acoustic & Speech Timeline Navigator
+                      {transcript.length > 0 && (
+                        <button 
+                          onClick={handleCopyTranscript}
+                          title="Copy transcript to clipboard"
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '0.2rem',
+                            borderRadius: '4px',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseEnter={(e) => e.currentTarget.style.color = 'var(--blue-light)'}
+                          onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                        >
+                          <Copy size={14} />
+                        </button>
+                      )}
+                    </span>
                     <span className="live-playback-pill">Now {formatSecs(playbackTime)}</span>
                   </h3>
                   
