@@ -315,6 +315,7 @@ export default function App() {
   const [chatMode, setChatMode] = useState('explain');
   const [chatModeOpen, setChatModeOpen] = useState(false);
   const [evaluationSummary, setEvaluationSummary] = useState<any | null>(null);
+  const [speakerMapping, setSpeakerMapping] = useState<Record<string, string>>({});
 
   // Ref handles
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -358,6 +359,16 @@ export default function App() {
     setProjectTags((project.tags || []).join(', '));
     setProjectDescription(project.description || '');
   }, [selectedProjectId, projects]);
+
+  useEffect(() => {
+    if (evaluationSummary?.speaker_roles?.speakers) {
+      const mapping: Record<string, string> = {};
+      evaluationSummary.speaker_roles.speakers.forEach((s: any) => {
+        mapping[s.speaker] = s.speaker;
+      });
+      setSpeakerMapping(mapping);
+    }
+  }, [evaluationSummary]);
 
   // Fetch results when status completes
   useEffect(() => {
@@ -620,6 +631,37 @@ export default function App() {
       alert(`Storage sync completed with ${count} artifacts using provider: ${res.data.provider}`);
     } catch (err: any) {
       alert(`Storage sync failed: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleSaveSpeakerMapping = async () => {
+    if (!systemStatus.active_project_id) {
+      alert('No active project to apply speaker mapping.');
+      return;
+    }
+    try {
+      await axios.post(`${API_BASE}/projects/${systemStatus.active_project_id}/speaker-map`, {
+        speaker_map: speakerMapping
+      });
+      alert('Speaker mapping saved successfully!');
+      fetchResults();
+      fetchEvaluationSummary();
+    } catch (err: any) {
+      alert(`Save speaker mapping failed: ${err.response?.data?.detail || err.message}`);
+    }
+  };
+
+  const handleReferenceTranscriptUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const file = e.target.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      await axios.post(`${API_BASE}/upload/transcript`, formData);
+      pollStatus();
+      fetchEvaluationSummary();
+    } catch (err: any) {
+      alert(`Upload reference failed: ${err.response?.data?.detail || err.message}`);
     }
   };
 
@@ -1472,7 +1514,7 @@ export default function App() {
                         <div className="keyframe-img-box">
                           {slide.image_path ? (
                             <img 
-                              src={`${API_BASE}/keyframes/${slide.image_path}`} 
+                              src={slide.image_path.startsWith('http') ? slide.image_path : `${API_BASE}/keyframes/${slide.image_path}`} 
                               alt={`Keyframe ${idx}`}
                               className="keyframe-img"
                               onError={(e) => { e.currentTarget.style.display = 'none'; }}
@@ -1664,29 +1706,69 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="glass-panel eval-card">
-                  <h3>Transcript Quality</h3>
+                <div className="glass-panel eval-card" style={{ gridColumn: 'span 2' }}>
+                  <h3>Transcript Quality & Comparison</h3>
                   {evaluationSummary?.transcript_quality?.available ? (
                     <>
-                      <div className="metric-grid">
-                        <div className="metric-tile"><span>WER</span><strong>{evaluationSummary.transcript_quality.wer}</strong></div>
-                        <div className="metric-tile"><span>CER</span><strong>{evaluationSummary.transcript_quality.cer}</strong></div>
+                      <div className="metric-grid" style={{ marginBottom: '1rem' }}>
+                        <div className="metric-tile"><span>WER</span><strong>{evaluationSummary.transcript_quality.wer !== null ? `${Math.round(evaluationSummary.transcript_quality.wer * 100)}%` : 'n/a'}</strong></div>
+                        <div className="metric-tile"><span>CER</span><strong>{evaluationSummary.transcript_quality.cer !== null ? `${Math.round(evaluationSummary.transcript_quality.cer * 100)}%` : 'n/a'}</strong></div>
                         <div className="metric-tile"><span>Quality grade</span><strong>{evaluationSummary.transcript_quality.grade}</strong></div>
                         <div className="metric-tile"><span>Reference words</span><strong>{evaluationSummary.transcript_quality.reference_words}</strong></div>
                         <div className="metric-tile"><span>Hypothesis words</span><strong>{evaluationSummary.transcript_quality.hypothesis_words}</strong></div>
                       </div>
-                      <div className="speaker-list" style={{ marginTop: '0.75rem' }}>
-                        {(evaluationSummary.transcript_quality.samples || []).slice(0, 4).map((sample: any, idx: number) => (
-                          <div className="speaker-row" key={idx}>
-                            <span>{formatSecs(sample.start)}</span>
-                            <strong>WER {sample.wer ?? 'n/a'}</strong>
-                            <em>{sample.reference || sample.hypothesis || 'empty sample'}</em>
-                          </div>
-                        ))}
+
+                      <div style={{ marginTop: '1.25rem', overflowX: 'auto', maxHeight: '300px', overflowY: 'auto' }}>
+                        <h4 style={{ marginBottom: '0.75rem', fontSize: '0.9rem', color: 'var(--text)' }}>Ground Truth vs ASR Comparison Samples</h4>
+                        <table className="eval-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left', opacity: 0.8 }}>
+                              <th style={{ padding: '0.5rem' }}>Time</th>
+                              <th style={{ padding: '0.5rem' }}>Reference (Ground Truth)</th>
+                              <th style={{ padding: '0.5rem' }}>Hypothesis (ASR Output)</th>
+                              <th style={{ padding: '0.5rem', textAlign: 'right' }}>WER</th>
+                              <th style={{ padding: '0.5rem', textAlign: 'right' }}>CER</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(evaluationSummary.transcript_quality.samples || []).map((sample: any, idx: number) => (
+                              <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', verticalAlign: 'top' }}>
+                                <td style={{ padding: '0.5rem', whiteSpace: 'nowrap', color: 'var(--theme-color, #a855f7)' }}>
+                                  {formatSecs(sample.start)}
+                                </td>
+                                <td style={{ padding: '0.5rem', color: '#10b981' }}>{sample.reference}</td>
+                                <td style={{ padding: '0.5rem', color: '#f59e0b' }}>{sample.hypothesis}</td>
+                                <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>
+                                  {sample.wer !== null ? `${Math.round(sample.wer * 100)}%` : 'n/a'}
+                                </td>
+                                <td style={{ padding: '0.5rem', textAlign: 'right', fontWeight: 'bold' }}>
+                                  {sample.cer !== null ? `${Math.round(sample.cer * 100)}%` : 'n/a'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
+                        <label className="btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer', gap: '0.5rem' }}>
+                          <Upload size={16} />
+                          Upload New Reference Transcript (.srt, .vtt, .txt)
+                          <input type="file" accept=".srt,.vtt,.txt" onChange={handleReferenceTranscriptUpload} style={{ display: 'none' }} />
+                        </label>
                       </div>
                     </>
                   ) : (
-                    <p className="eval-muted">{evaluationSummary?.transcript_quality?.reason || 'Upload Teams transcript to compute WER/CER.'}</p>
+                    <div>
+                      <p className="eval-muted" style={{ marginBottom: '1rem' }}>
+                        {evaluationSummary?.transcript_quality?.reason || 'Upload a Teams VTT/SRT transcript as reference to compute WER/CER.'}
+                      </p>
+                      <label className="btn-primary" style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer', gap: '0.5rem' }}>
+                        <Upload size={16} />
+                        Upload Reference Transcript
+                        <input type="file" accept=".srt,.vtt,.txt" onChange={handleReferenceTranscriptUpload} style={{ display: 'none' }} />
+                      </label>
+                    </div>
                   )}
                 </div>
 
@@ -1718,24 +1800,53 @@ export default function App() {
                 </div>
 
                 <div className="glass-panel eval-card">
-                  <h3>Speaker Role Pass</h3>
+                  <h3>Speaker Role Pass & Mapping</h3>
                   <p className="eval-muted">{evaluationSummary?.speaker_roles?.engine || 'No speaker role data yet.'}</p>
                   {evaluationSummary?.speaker_roles?.diarization_status && (
-                    <div className="speaker-row">
+                    <div className="speaker-row" style={{ marginBottom: '1rem' }}>
                       <span>{evaluationSummary.speaker_roles.diarization_status.provider || 'diarization'}</span>
                       <strong>{evaluationSummary.speaker_roles.diarization_status.status || 'unknown'}</strong>
                       <em>{evaluationSummary.speaker_roles.diarization_status.device || evaluationSummary.speaker_roles.diarization_status.reason || ''}</em>
                     </div>
                   )}
                   <div className="speaker-list">
-                    {(evaluationSummary?.speaker_roles?.speakers || []).slice(0, 8).map((speaker: any, idx: number) => (
-                      <div className="speaker-row" key={idx}>
-                        <span>{speaker.speaker}</span>
-                        <strong>{speaker.role}</strong>
-                        <em>{speaker.segments} segments | {speaker.duration_sec ?? 0}s</em>
+                    {(evaluationSummary?.speaker_roles?.speakers || []).map((speaker: any, idx: number) => (
+                      <div key={idx} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid rgba(255, 255, 255, 0.04)', gap: '1rem' }}>
+                        <div style={{ flex: '1', display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{speaker.speaker}</span>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{speaker.role} &bull; {speaker.segments} segments</span>
+                        </div>
+                        <input
+                          type="text"
+                          className="input-field"
+                          placeholder="Rename..."
+                          value={speakerMapping[speaker.speaker] || ''}
+                          onChange={(e) => setSpeakerMapping({
+                            ...speakerMapping,
+                            [speaker.speaker]: e.target.value
+                          })}
+                          style={{
+                            width: '120px',
+                            padding: '0.25rem 0.5rem',
+                            fontSize: '0.8rem',
+                            background: 'rgba(255,255,255,0.05)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '4px',
+                            color: 'white'
+                          }}
+                        />
                       </div>
                     ))}
                   </div>
+                  {evaluationSummary?.speaker_roles?.speakers && evaluationSummary.speaker_roles.speakers.length > 0 && (
+                    <button 
+                      className="btn-primary" 
+                      onClick={handleSaveSpeakerMapping}
+                      style={{ marginTop: '1rem', width: '100%' }}
+                    >
+                      Save Speaker Mappings
+                    </button>
+                  )}
                 </div>
 
                 <div className="glass-panel eval-card">
