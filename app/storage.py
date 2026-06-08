@@ -56,7 +56,10 @@ def get_storage_backend() -> StorageBackend:
         class S3Storage:
             def put_file(self, local_path: Path, object_name: str) -> str:
                 s3.upload_file(str(local_path), bucket, object_name)
-                return f"s3://{bucket}/{object_name}"
+                region = s3.meta.region_name or "us-east-1"
+                if region == "us-east-1":
+                    return f"https://{bucket}.s3.amazonaws.com/{object_name}"
+                return f"https://{bucket}.s3.{region}.amazonaws.com/{object_name}"
 
         return S3Storage()
 
