@@ -40,6 +40,9 @@ services:
       ECHONOTES_STORAGE_PROVIDER: local
       ECHONOTES_VECTOR_BACKEND: auto
       OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ECHONOTES_DIARIZATION_PROVIDER: ${ECHONOTES_DIARIZATION_PROVIDER:-heuristic}
+      PYANNOTE_AUTH_TOKEN: ${PYANNOTE_AUTH_TOKEN:-}
+      PYANNOTE_MODEL: ${PYANNOTE_MODEL:-pyannote/speaker-diarization-3.1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -68,6 +71,9 @@ services:
       ECHONOTES_STORAGE_PROVIDER: local
       ECHONOTES_VECTOR_BACKEND: auto
       OLLAMA_BASE_URL: http://host.docker.internal:11434
+      ECHONOTES_DIARIZATION_PROVIDER: ${ECHONOTES_DIARIZATION_PROVIDER:-heuristic}
+      PYANNOTE_AUTH_TOKEN: ${PYANNOTE_AUTH_TOKEN:-}
+      PYANNOTE_MODEL: ${PYANNOTE_MODEL:-pyannote/speaker-diarization-3.1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
